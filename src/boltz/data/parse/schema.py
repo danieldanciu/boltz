@@ -1188,21 +1188,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
         elif (entity_type == "ligand") and ("smiles" in items[0][entity_type]):
             seq = items[0][entity_type]["smiles"]
-            ids = items[0][entity_type]["id"]
-            if isinstance(ids, str):
-                affinity = ids in affinity_ligands
-            elif isinstance(ids, list) and len(ids) == 1:
-                affinity = ids[0] in affinity_ligands
-            elif (
-                isinstance(ids, list)
-                and len(ids) > 1
-                and any(x in affinity_ligands for x in ids)
-            ):
-                msg = "Cannot compute affinity for a ligand that has multiple copies!"
-                raise ValueError(msg)
-            else:
-                affinity = False
-
+            affinity = items[0][entity_type]["id"] in affinity_ligands
             if affinity:
                 seq = standardize(seq)
 

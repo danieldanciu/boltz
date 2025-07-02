@@ -2,6 +2,9 @@
 requires = ["setuptools >= 61.0"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = ["pytest>=8.1.1", "pytest-cov>=5.0"]
+
 [project]
 name = "boltz"
 version = "2.0.2"
@@ -33,6 +36,7 @@ dependencies = [
     "gemmi==0.6.5",
     "scikit-learn==1.6.1",
     "chembl_structure_pipeline==1.2.2",
+    "jaxtyping>=0.2.28",
 ]
 
 [project.scripts]
@@ -46,23 +50,142 @@ test = ["pytest", "requests"]
 src = ["src"]
 extend-exclude = ["conf.py"]
 target-version = "py39"
-lint.select = ["ALL"]
-lint.ignore = [
-    "COM812",  # Conflicts with the formatter
-    "ISC001",  # Conflicts with the formatter
-    "ANN101",  # "missing-type-self"
-    "RET504",  # Unnecessary assignment to `x` before `return` statementRuff
-    "S101",    # Use of `assert` detected
-    "D100",    # Missing docstring in public module
-    "D104",    # Missing docstring in public package
-    "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
-    "PT004",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
-    "PT005",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
-    "PT023",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
-    "FBT001",
-    "FBT002",
-    "PLR0913", # Too many arguments to init (> 5)
+line-length = 120
+
+[tool.ruff.lint]
+# On top of the default  (`E`, `F`) `select`:
+extend-select = [
+  "A",      # Flake8 builtins
+  "ARG",    # Flake8 unused arguments
+  "ASYNC",  # Flake8 async
+  "ASYNC1", # Flake8 ASYNC1
+
+  "B",      # Flake8 bugbear
+  "BLE",    # Flake8 blind except
+  "C4",     # Flake8 comprehension
+  "D",      # Flake8 docstrings
+  "DOC202", # Shouldn't have a returns section if the function doesn't return anything.
+  "DOC403", # Shouldn't have a yields section if the function doesn't yield anything.
+  "DTZ",    # flake8-datetimez
+  "ERA",    # eradicate
+  "FAST",   # FastAPI-specific rules
+  "FLY002", # static-join-to-f-string
+  "FURB",   # static-join-to-f-string
+  "I",      # isort
+  "ICN",    # Flake8 import conventions
+  "ISC",    # Flake8 implicit string concat
+  "LOG",    # flake8 logging
+  "LOG",    # static-join-to-f-string
+  "N",      # pep8-naming
+  "PD",     # pandas vet
+  "PERF",   # perflint
+  "PGH",    # pygrep hooks
+  "PGH",    # pygrep-hooks
+  "PIE",    # Flake8 pie
+  "PL",     # pylint
+  "PT",     # Flake8 pytest style
+  "PTH",    # Flake8 use pathlib
+  "PYI",    # Flake8 pyi
+  "Q",      # Flake8 quotes
+  "RET",    # Flake8 return
+  "RSE",    # Flake8 raise
+  "RUF",    # Ruff-specific rules
+  "SIM",    # Flake8 simplify
+  "SLF",    # Flake8 self
+  "T10",    # Flake8 debugger
+  "TD",     # Flake8 TODOs
+  "TID",    # Flake8 tidy imports
+  "TRY",    # tryceratops (common error handling mistakes)
+  "UP",     # pyupgrade a tool (and pre-commit hook) to automatically upgrade syntax for newer versions of the language.
+  "YTT",    # Flake8 2020,
 ]
+ignore = [
+  "ANN",     # Flake8 annotation
+  "B008",    # Do not perform function call `Depends` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+  "B011",    # allow `assert False`
+  "C408",    # Unnecessary `dict` call (rewrite as a literal)
+  "D100",    # Missing docstring in public module
+  "D101",    # Missing docstring in public class
+  "D102",    # Missing docstring in public method
+  "D103",    # Missing docstring in public function
+  "D104",    # Missing docstring in public package
+  "D105",    # Missing docstring in magic method
+  "D106",    # Missing docstring in public nested class
+  "D107",    # Missing docstring in __init__
+  "D202",    # Blank lines after function docstring
+  "D203",    # No blank line required before class docstring
+  "D205",    # Docstrings must have a blank second line.
+  "D213",    # No starting blank line
+  "D401",    # Use descriptive docstrings.
+  "D413",    # No blank line after last section
+  "D415",    # Period, question mark or explamation point after first docstring line
+  "E402",    # Module level import at top of file. We tend to have dynamic type-checking decorators above this, and ruff-isort will autofix as much as it can anyway.
+  "E731",    # Allow lambda assignments
+  "ERA001",  # Commented-out code
+  "F722",    # Forward annotation false positive from jaxtyping, see https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
+  "FURB103", # Write whole file
+  "FURB113", # Use `.extend` instead of repeated `.append`
+  "ISC001",  # conflicts with ruff formatter
+  "N804",    # First argument of a class method should be named `cls`. This is wrong for a metaclass `__new__`, which should be `mcs`.
+  "N806",    # variables name should be lowercase. This is unhelpful for variables representing proteins.
+  "PD901",   # Avoid using the generic variable name `df` for DataFrames
+  "PERF401", # Use a list comprehension over a for loop.
+  "PGH003",  # Use specific rule codes when ignoring type issues
+  "PLC0414", # allow `from ... import foo as foo`, which is used to declare a public re-export.
+  "PLC0415", # `import` should be at the top-level of a file
+  "PLC1901", # Encourages implicit-cast-to-bool, eek.
+  "PLR0402", # This wants to rewrite `import foo.bar as bar` as `from foo import bar`, which I don't like because it mixes `import ...` with `from ... import ...` within a block.
+  "PLR09",   # Too many methods, etc.
+  "PLR1702", # Too many nested blocks.
+  "PLR2004", # Magic value used in comparison
+  "PLR5501", # Collapse `else: if:` into `elif:`. Sometimes not doing this gives clearer-to-understand logic.
+  "PLR6104", # non-augmented-assignment, sometimes just wrong
+  "PLW2901", # `for` loop variable / `with` context variable overwritten
+  "PLW3201", # bad __magic_method__
+  "PT006",
+  "PT007",
+  "PT012",   # allow nontrivial statements in `pytest.raises` blocks. This is needed to `del` the error-creating object.
+  "PT015",   # allow `assert False`
+  "PTH123",  # Use pathlib.Path.open instead of open (which is the exact same thing, this is pure pedantry)
+  "PYI041",  # Checks for parameter annotations that contain redundant unions between numeric types (e.g., int | float)
+  "RET504",  # Unnecessary assignment to {name} before `return` statement
+  "RET505",  # superfluous else/elif after return/raise
+  "RET506",
+  "RET507",
+  "RET508",
+  "RUF010",  # explicit-f-string-type-conversion (PEP https://peps.python.org/pep-0498/#s-r-and-a-are-redundant advises against)
+  "RUF017",  # Allow quadratic list summation since it is arguably the most readable option
+  "RUF036",  # None not at end of type annotation.
+  "RUF052",  # Allow underscore prefixed variables to be used (e.g. _x is interpreted as a dummy variable)
+  "SIM102",  # Avoid nested if statements (sometimes this is a simpler way to think about things!)
+  "SIM108",  # Use ternary operator (sometimes reduces readability)
+  "SIM118",  # Avoid ruff complaining about "key in dict.keys()". We like it since it signals intent.
+  "TD003",   # Missing issue link.
+  "TID252",  # Prefer absolute imports over relative imports from parent modules.
+  "TRY003",  # TRY003 Avoid specifying long messages outside the exception class
+  "TRY301",  # TRY301 No `raise` within `try`
+  "UP006",   # Upgrade e.g. `typing.List` -> `list`. Disabled for now as Flyte sometimes still demands the old thing.
+  "UP035",   # (same as UP006)
+  "PD101",   # allow df.Series,nunique()
+  "E402",    # Allow module import not at top, needed for init files because we want to load typechecking modules first.
+]
+preview = true
+
+unfixable = ["B905"] # Don't fix zip without an explicit strict argument to "strict=False"
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+max-nested-blocks = 7
+
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = [
@@ -75,16 +198,22 @@ lint.ignore = [
 "scripts/**" = [
     "INP001", # Requires __init__.py but folder is not a package.
 ]
+"*test*.py" = [
+  "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant...
+  "D",       # docstring
+  "PLC2701", # private name import
+  "SLF001",  # private member access
+]
+# Explicit re-exports are fine in __init__.py, still a code smell elsewhere
+"__init__.py" = ["PLC0414"]
 
-[tool.ruff.lint.pyupgrade]
-# Preserve types, even if a file imports `from __future__ import annotations`(https://github.com/astral-sh/ruff/issues/5434)
-keep-runtime-typing = true
 
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
+
 
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "regression",
 ]
+[tool.setuptools.packages.find]
+where = ["src"]

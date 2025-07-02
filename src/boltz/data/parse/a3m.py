@@ -50,6 +50,8 @@ def _parse_a3m(  # noqa: C901
                 taxonomy_id = taxonomy.get(uniref_id)
                 if taxonomy_id is None:
                     taxonomy_id = -1
+            elif "tax_id:" in line:
+                taxonomy_id = int(line.split("\t")[-1].split("tax_id:")[1])
             else:
                 taxonomy_id = -1
             continue
