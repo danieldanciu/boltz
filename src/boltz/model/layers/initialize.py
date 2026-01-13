@@ -22,79 +22,69 @@ import torch
 from scipy.stats import truncnorm
 
 
-def _prod(nums):
-    out = 1
-    for n in nums:
-        out = out * n
-    return out
-
-
-def _calculate_fan(linear_weight_shape, fan="fan_in"):
+def _calculate_fan(linear_weight_shape: torch.Size, fan: str = "fan_in") -> int:
     fan_out, fan_in = linear_weight_shape
-
     if fan == "fan_in":
-        f = fan_in
-    elif fan == "fan_out":
-        f = fan_out
-    elif fan == "fan_avg":
-        f = (fan_in + fan_out) / 2
-    else:
-        raise ValueError("Invalid fan option")
-
-    return f
+        return fan_in
+    if fan == "fan_out":
+        return fan_out
+    if fan == "fan_avg":
+        return (fan_in + fan_out) / 2
+    raise ValueError("Invalid fan option")
 
 
-def trunc_normal_init_(weights, scale=1.0, fan="fan_in"):
+def trunc_normal_init_(weights: torch.Tensor, scale: float = 1.0, fan: str = "fan_in"):
+    """Initialize weights using a truncated normal distribution.
+
+    Args:
+        weights (torch.Tensor): The weights to initialize.
+        scale (float): The scale of the distribution.
+        fan (str): The fan mode to use ('fan_in', 'fan_out', or 'fan_avg').
+    """
     shape = weights.shape
     f = _calculate_fan(shape, fan)
     scale = scale / max(1, f)
     a = -2
     b = 2
     std = math.sqrt(scale) / truncnorm.std(a=a, b=b, loc=0, scale=1)
-    size = _prod(shape)
+    size = math.prod(shape)
     samples = truncnorm.rvs(a=a, b=b, loc=0, scale=std, size=size)
     samples = np.reshape(samples, shape)
     with torch.no_grad():
         weights.copy_(torch.tensor(samples, device=weights.device))
 
 
-def lecun_normal_init_(weights):
+def lecun_normal_init_(weights: torch.Tensor):
     trunc_normal_init_(weights, scale=1.0)
 
 
-def he_normal_init_(weights):
+def he_normal_init_(weights: torch.Tensor):
     trunc_normal_init_(weights, scale=2.0)
 
 
-def glorot_uniform_init_(weights):
+def glorot_uniform_init_(weights: torch.Tensor):
     torch.nn.init.xavier_uniform_(weights, gain=1)
 
 
-def final_init_(weights):
+def final_init_(weights: torch.Tensor):
     with torch.no_grad():
         weights.fill_(0.0)
 
 
-def gating_init_(weights):
+def gating_init_(weights: torch.Tensor):
     with torch.no_grad():
         weights.fill_(0.0)
 
 
-def bias_init_zero_(bias):
+def bias_init_zero_(bias: torch.Tensor):
     with torch.no_grad():
         bias.fill_(0.0)
 
 
-def bias_init_one_(bias):
+def bias_init_one_(bias: torch.Tensor):
     with torch.no_grad():
         bias.fill_(1.0)
 
 
-def normal_init_(weights):
+def normal_init_(weights: torch.Tensor):
     torch.nn.init.kaiming_normal_(weights, nonlinearity="linear")
-
-
-def ipa_point_weights_init_(weights):
-    with torch.no_grad():
-        softplus_inverse_1 = 0.541324854612918
-        weights.fill_(softplus_inverse_1)

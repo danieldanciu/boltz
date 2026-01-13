@@ -1,5 +1,6 @@
 from typing import Optional
 
+from jaxtyping import Float32
 from torch import Tensor, nn
 
 import boltz.model.layers.initialize as init
@@ -14,17 +15,12 @@ class Transition(nn.Module):
         hidden: int = 512,
         out_dim: Optional[int] = None,
     ) -> None:
-        """Initialize the TransitionUpdate module.
+        """Initializes the TransitionUpdate module.
 
-        Parameters
-        ----------
-        dim: int
-            The dimension of the input, default 128
-        hidden: int
-            The dimension of the hidden, default 512
-        out_dim: Optional[int]
-            The dimension of the output, default None
-
+        Args:
+            dim: The dimension of the input.
+            hidden: The dimension of the hidden layer.
+            out_dim: The dimension of the output. If None, it defaults to the input dimension (`dim`).
         """
         super().__init__()
         if out_dim is None:
@@ -44,18 +40,17 @@ class Transition(nn.Module):
         init.lecun_normal_init_(self.fc2.weight)
         init.final_init_(self.fc3.weight)
 
-    def forward(self, x: Tensor, chunk_size: int = None) -> Tensor:
+    def forward(
+        self, x: Float32[Tensor, "b dim ..."], chunk_size: Optional[int] = None
+    ) -> Float32[Tensor, "b out_dim ..."]:
         """Perform a forward pass.
 
-        Parameters
-        ----------
-        x: torch.Tensor
-            The input data of shape (..., D)
+        Args:
+            x: the input tensor
+            chunk_size: if not None, the chunk size to use for computing the output in chunks.
 
-        Returns
-        -------
-        x: torch.Tensor
-            The output data of shape (..., D)
+        Returns:
+            The output tensor.
 
         """
         x = self.norm(x)
@@ -70,7 +65,7 @@ class Transition(nn.Module):
                 fc1_slice = self.fc1.weight[i : i + chunk_size, :]
                 fc2_slice = self.fc2.weight[i : i + chunk_size, :]
                 fc3_slice = self.fc3.weight[:, i : i + chunk_size]
-                x_chunk = self.silu((x @ fc1_slice.T)) * (x @ fc2_slice.T)
+                x_chunk = self.silu(x @ fc1_slice.T) * (x @ fc2_slice.T)
                 if i == 0:
                     x_out = x_chunk @ fc3_slice.T
                 else:

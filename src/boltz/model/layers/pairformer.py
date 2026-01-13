@@ -47,19 +47,13 @@ class PairformerLayer(nn.Module):
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
 
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
 
         self.transition_s = Transition(token_s, token_s * 4)
         self.transition_z = Transition(token_z, token_z * 4)
 
-        self.s_post_norm = (
-            nn.LayerNorm(token_s) if self.post_layer_norm else nn.Identity()
-        )
+        self.s_post_norm = nn.LayerNorm(token_s) if self.post_layer_norm else nn.Identity()
 
     def forward(
         self,
@@ -85,7 +79,7 @@ class PairformerLayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=pair_mask,
@@ -98,9 +92,7 @@ class PairformerLayer(nn.Module):
         # Compute sequence stack
         with torch.autocast("cuda", enabled=False):
             s_normed = self.pre_norm_s(s.float())
-            s = s.float() + self.attention(
-                s=s_normed, z=z.float(), mask=mask.float(), k_in=s_normed
-            )
+            s = s.float() + self.attention(s=s_normed, z=z.float(), mask=mask.float(), k_in=s_normed)
             s = s + self.transition_s(s)
             s = self.s_post_norm(s)
 
@@ -124,6 +116,7 @@ class PairformerModule(nn.Module):
         v2: bool = False,
         **kwargs,
     ) -> None:
+        del kwargs
         super().__init__()
         self.token_z = token_z
         self.num_blocks = num_blocks
@@ -189,9 +182,7 @@ class PairformerModule(nn.Module):
                     use_trifast=use_trifast,
                 )
             else:
-                s, z = layer(
-                    s, z, mask, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast
-                )
+                s, z = layer(s, z, mask, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast)
         return s, z
 
 
@@ -214,12 +205,8 @@ class PairformerNoSeqLayer(nn.Module):
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
 
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
 
         self.transition_z = Transition(token_z, token_z * 4)
 
@@ -245,7 +232,7 @@ class PairformerNoSeqLayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=pair_mask,
@@ -272,6 +259,7 @@ class PairformerNoSeqModule(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__()
+        del kwargs
         self.token_z = token_z
         self.num_blocks = num_blocks
         self.dropout = dropout
@@ -279,7 +267,7 @@ class PairformerNoSeqModule(nn.Module):
         self.activation_checkpointing = activation_checkpointing
 
         self.layers = nn.ModuleList()
-        for i in range(num_blocks):
+        for _ in range(num_blocks):
             self.layers.append(
                 PairformerNoSeqLayer(
                     token_z,
@@ -306,9 +294,7 @@ class PairformerNoSeqModule(nn.Module):
 
         for layer in self.layers:
             if self.activation_checkpointing and self.training:
-                z = torch.utils.checkpoint.checkpoint(
-                    layer, z, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast
-                )
+                z = torch.utils.checkpoint.checkpoint(layer, z, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast)
             else:
                 z = layer(z, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast)
         return z

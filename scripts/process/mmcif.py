@@ -109,7 +109,7 @@ def get_dates(block: gemmi.cif.Block) -> tuple[str, str, str]:
     block : gemmi.cif.Block
         The block to process.
 
-    Returns
+    Returns:
     -------
     str
         The deposited date.
@@ -138,7 +138,7 @@ def get_resolution(block: gemmi.cif.Block) -> float:
     block : gemmi.cif.Block
         The block to process.
 
-    Returns
+    Returns:
     -------
     float
         The resolution.
@@ -164,7 +164,7 @@ def get_method(block: gemmi.cif.Block) -> str:
     block : gemmi.cif.Block
         The block to process.
 
-    Returns
+    Returns:
     -------
     str
         The method.
@@ -187,7 +187,7 @@ def convert_atom_name(name: str) -> tuple[int, int, int, int]:
     name : str
         The atom name.
 
-    Returns
+    Returns:
     -------
     tuple[int, int, int, int]
         The converted atom name.
@@ -207,7 +207,7 @@ def get_unk_token(dtype: gemmi.PolymerType) -> str:
     dtype : gemmi.EntityType
         The entity type.
 
-    Returns
+    Returns:
     -------
     str
         The unknown token.
@@ -236,12 +236,12 @@ def get_conformer(mol: Mol) -> Conformer:
     mol: Mol
         The molecule to process.
 
-    Returns
+    Returns:
     -------
     Conformer
         The desired conformer, if any.
 
-    Raises
+    Raises:
     ------
     ValueError
         If there are no conformers of the given tyoe.
@@ -281,7 +281,7 @@ def compute_covalent_ligands(
     entities: dict[str, gemmi.Entity]
         The entities in the structure.
 
-    Returns
+    Returns:
     -------
     set
         The covalent ligand subchains.
@@ -303,8 +303,8 @@ def compute_covalent_ligands(
         res_2_id = connection.partner2.res_id.seqid
         res_2_id = str(res_2_id.num) + str(res_2_id.icode).strip()
 
-        subchain_1 = subchain_map[(chain_1_name, res_1_id)]
-        subchain_2 = subchain_map[(chain_2_name, res_2_id)]
+        subchain_1 = subchain_map[chain_1_name, res_1_id]
+        subchain_2 = subchain_map[chain_2_name, res_2_id]
 
         # If non-polymer or branched, add to set
         entity_1 = entities[subchain_1].entity_type.name
@@ -328,7 +328,7 @@ def compute_interfaces(atom_data: np.ndarray, chain_data: np.ndarray) -> np.ndar
     chain_data : List[tuple]
         The chain data.
 
-    Returns
+    Returns:
     -------
     List[tuple[int, int]]
         The interfaces.
@@ -340,7 +340,7 @@ def compute_interfaces(atom_data: np.ndarray, chain_data: np.ndarray) -> np.ndar
         chain_ids.extend([idx] * chain["atom_num"])
     chain_ids = np.array(chain_ids)
 
-    # Filte to present atoms
+    # Filter to present atoms
     coords = atom_data["coords"]
     mask = atom_data["is_present"]
 
@@ -370,7 +370,7 @@ def compute_interfaces(atom_data: np.ndarray, chain_data: np.ndarray) -> np.ndar
 ####################################################################################################
 
 
-def parse_ccd_residue(  # noqa: PLR0915, C901
+def parse_ccd_residue(
     name: str,
     components: dict[str, Mol],
     res_idx: int,
@@ -393,7 +393,7 @@ def parse_ccd_residue(  # noqa: PLR0915, C901
     gemmi_mol : Optional[gemmi.Residue]
         The PDB molecule, as a gemmi Residue object, if any.
 
-    Returns
+    Returns:
     -------
     ParsedResidue, optional
        The output ParsedResidue, if successful.
@@ -427,9 +427,7 @@ def parse_ccd_residue(  # noqa: PLR0915, C901
                 gemmi_mol[0].pos.z,
             )
         ref_atom = ref_mol.GetAtoms()[0]
-        chirality_type = const.chirality_type_ids.get(
-            str(ref_atom.GetChiralTag()), unk_chirality
-        )
+        chirality_type = const.chirality_type_ids.get(str(ref_atom.GetChiralTag()), unk_chirality)
         atom = ParsedAtom(
             name=ref_atom.GetProp("name"),
             element=ref_atom.GetAtomicNum(),
@@ -478,16 +476,10 @@ def parse_ccd_residue(  # noqa: PLR0915, C901
         element = atom.GetAtomicNum()
         ref_coords = conformer.GetAtomPosition(atom.GetIdx())
         ref_coords = (ref_coords.x, ref_coords.y, ref_coords.z)
-        chirality_type = const.chirality_type_ids.get(
-            str(atom.GetChiralTag()), unk_chirality
-        )
+        chirality_type = const.chirality_type_ids.get(str(atom.GetChiralTag()), unk_chirality)
 
         # If the atom is a leaving atom, skip if not in the PDB and is_covalent
-        if (
-            int(atom.GetProp("leaving_atom")) == 1
-            and is_covalent
-            and (atom_name not in pdb_pos)
-        ):
+        if int(atom.GetProp("leaving_atom")) == 1 and is_covalent and (atom_name not in pdb_pos):
             continue
 
         # Get PDB coordinates, if any
@@ -547,7 +539,7 @@ def parse_ccd_residue(  # noqa: PLR0915, C901
     )
 
 
-def parse_polymer(  # noqa: C901, PLR0915, PLR0912
+def parse_polymer(
     polymer: gemmi.ResidueSpan,
     polymer_type: gemmi.PolymerType,
     sequence: list[str],
@@ -576,12 +568,12 @@ def parse_polymer(  # noqa: C901, PLR0915, PLR0912
     components : dict[str, Mol]
         The preprocessed PDB components dictionary.
 
-    Returns
+    Returns:
     -------
     ParsedChain, optional
         The output chain, if successful.
 
-    Raises
+    Raises:
     ------
     ValueError
         If the alignment fails.
@@ -684,9 +676,7 @@ def parse_polymer(  # noqa: C901, PLR0915, PLR0912
                     coords=coords,
                     conformer=ref_coords,
                     is_present=atom_is_present,
-                    chirality=const.chirality_type_ids.get(
-                        str(ref_atom.GetChiralTag()), unk_chirality
-                    ),
+                    chirality=const.chirality_type_ids.get(str(ref_atom.GetChiralTag()), unk_chirality),
                 )
             )
 
@@ -703,8 +693,7 @@ def parse_polymer(  # noqa: C901, PLR0915, PLR0912
             nh2_coords = np.array(nh2.coords)
 
             if all(atom.is_present for atom in (cd, nh1, nh2)) and (
-                np.linalg.norm(nh1_coords - cd_coords)
-                > np.linalg.norm(nh2_coords - cd_coords)
+                np.linalg.norm(nh1_coords - cd_coords) > np.linalg.norm(nh2_coords - cd_coords)
             ):
                 atoms[ref_atoms.index("NH1")] = replace(nh1, coords=nh2.coords)
                 atoms[ref_atoms.index("NH2")] = replace(nh2, coords=nh1.coords)
@@ -767,7 +756,7 @@ def parse_connection(
     subchain_map : dict[tuple[str, int], str]
         The mapping from chain, residue index to subchain name.
 
-    Returns
+    Returns:
     -------
     List[Connection]
         The parsed connections.
@@ -783,36 +772,20 @@ def parse_connection(
     res_2_id = connection.partner2.res_id.seqid
     res_2_id = str(res_2_id.num) + str(res_2_id.icode).strip()
 
-    subchain_1 = subchain_map[(chain_1_name, res_1_id)]
-    subchain_2 = subchain_map[(chain_2_name, res_2_id)]
+    subchain_1 = subchain_map[chain_1_name, res_1_id]
+    subchain_2 = subchain_map[chain_2_name, res_2_id]
 
     # Get chain indices
     chain_1 = next(chain for chain in chains if (chain.name == subchain_1))
     chain_2 = next(chain for chain in chains if (chain.name == subchain_2))
 
     # Get residue indices
-    res_1_idx, res_1 = next(
-        (idx, res)
-        for idx, res in enumerate(chain_1.residues)
-        if (res.orig_idx == res_1_id)
-    )
-    res_2_idx, res_2 = next(
-        (idx, res)
-        for idx, res in enumerate(chain_2.residues)
-        if (res.orig_idx == res_2_id)
-    )
+    res_1_idx, res_1 = next((idx, res) for idx, res in enumerate(chain_1.residues) if (res.orig_idx == res_1_id))
+    res_2_idx, res_2 = next((idx, res) for idx, res in enumerate(chain_2.residues) if (res.orig_idx == res_2_id))
 
     # Get atom indices
-    atom_index_1 = next(
-        idx
-        for idx, atom in enumerate(res_1.atoms)
-        if atom.name == connection.partner1.atom_name
-    )
-    atom_index_2 = next(
-        idx
-        for idx, atom in enumerate(res_2.atoms)
-        if atom.name == connection.partner2.atom_name
-    )
+    atom_index_1 = next(idx for idx, atom in enumerate(res_1.atoms) if atom.name == connection.partner1.atom_name)
+    atom_index_2 = next(idx for idx, atom in enumerate(res_2.atoms) if atom.name == connection.partner2.atom_name)
 
     conn = ParsedConnection(
         chain_1=subchain_1,
@@ -826,7 +799,7 @@ def parse_connection(
     return conn
 
 
-def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
+def parse_mmcif(
     path: str,
     components: dict[str, Mol],
     use_assembly: bool = True,
@@ -842,7 +815,7 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
     use_assembly: bool
         Whether to use the first assembly.
 
-    Returns
+    Returns:
     -------
     ParsedStructure
         The parsed structure.
@@ -894,7 +867,7 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
         for residue in chain:
             seq_id = residue.seqid
             seq_id = str(seq_id.num) + str(seq_id.icode).strip()
-            subchain_map[(chain.name, seq_id)] = residue.subchain
+            subchain_map[chain.name, seq_id] = residue.subchain
 
     # Find covalent ligands
     covalent_chain_ids = compute_covalent_ligands(
@@ -1046,7 +1019,7 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
                     res.is_present,
                 )
             )
-            res_to_idx[(chain.name, i)] = (res_idx, atom_idx)
+            res_to_idx[chain.name, i] = (res_idx, atom_idx)
 
             for bond in res.bonds:
                 atom_1 = atom_idx + bond.atom_1
@@ -1073,8 +1046,8 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
     for conn in connections:
         chain_1_idx = chain_to_idx[conn.chain_1]
         chain_2_idx = chain_to_idx[conn.chain_2]
-        res_1_idx, atom_1_offset = res_to_idx[(conn.chain_1, conn.residue_index_1)]
-        res_2_idx, atom_2_offset = res_to_idx[(conn.chain_2, conn.residue_index_2)]
+        res_1_idx, atom_1_offset = res_to_idx[conn.chain_1, conn.residue_index_1]
+        res_2_idx, atom_2_offset = res_to_idx[conn.chain_2, conn.residue_index_2]
         atom_1_idx = atom_1_offset + conn.atom_index_1
         atom_2_idx = atom_2_offset + conn.atom_index_2
         connection_data.append(

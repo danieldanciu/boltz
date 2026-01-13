@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
+from jaxtyping import Bool, Float, Float32, Int64
 from torch import Tensor, nn
 
 from boltz.data import const
@@ -22,7 +23,7 @@ from boltz.model.modules.encoders import AtomAttentionEncoder
 
 
 class InputEmbedder(nn.Module):
-    """Input embedder."""
+    """Transforms the input features (sequence, msa profile, etc.) into a single embedding."""
 
     def __init__(
         self,
@@ -39,28 +40,17 @@ class InputEmbedder(nn.Module):
     ) -> None:
         """Initialize the input embedder.
 
-        Parameters
-        ----------
-        atom_s : int
-            The atom single representation dimension.
-        atom_z : int
-            The atom pair representation dimension.
-        token_s : int
-            The single token representation dimension.
-        token_z : int
-            The pair token representation dimension.
-        atoms_per_window_queries : int
-            The number of atoms per window for queries.
-        atoms_per_window_keys : int
-            The number of atoms per window for keys.
-        atom_feature_dim : int
-            The atom feature dimension.
-        atom_encoder_depth : int
-            The atom encoder depth.
-        atom_encoder_heads : int
-            The atom encoder heads.
-        no_atom_encoder : bool, optional
-            Whether to use the atom encoder, by default False
+        Args:
+            atom_s: the atom single representation embedding size.
+            atom_z: the atom pair representation embedding size.
+            token_s: the single token representation embedding size.
+            token_z: the pair token representation embedding size.
+            atoms_per_window_queries: the number of atoms per window for queries.
+            atoms_per_window_keys: the number of atoms per window for keys.
+            atom_feature_dim: the atom feature dimension.
+            atom_encoder_depth: the atom encoder depth.
+            atom_encoder_heads: the atom encoder heads.
+            no_atom_encoder: whether to use the atom encoder (if disabled, the corresponding embedding is set to zero).
 
         """
         super().__init__()
@@ -81,25 +71,24 @@ class InputEmbedder(nn.Module):
                 structure_prediction=False,
             )
 
-    def forward(self, feats: dict[str, Tensor]) -> Tensor:
+    def forward(self, feats: dict[str, Tensor]) -> Float32[Tensor, "batch len embed=455"]:
         """Perform the forward pass.
 
-        Parameters
-        ----------
-        feats : Dict[str, Tensor]
-            Input features
+        Args:
+            feats: dictionary of input feature name to input feature tensor. The following features are being
+                processed:
+                 - `res_type`: the residue type, a one-hot encoding of the 33 token types (amino acids, nucleotides, etc.)
+                 - `profile`: the amino acid frequency in the MSA
+                 - `deletion_mean`: the average number of deletions per position in the MSA (see featurizer.py for details)
+                 - `pocket_feature`: the pocket feature, a one-hot encoding of the 4 pocket types (see const.py::pocket_contact_info)
+                 - if `self.no_atom_encoder` is False, the atom features are also processed by self.atom_attention_encoder.
 
-        Returns
-        -------
-        Tensor
-            The embedded tokens.
-
+        Return: the embedded tokens.
         """
-        # Load relevant features
-        res_type = feats["res_type"]
-        profile = feats["profile"]
-        deletion_mean = feats["deletion_mean"].unsqueeze(-1)
-        pocket_feature = feats["pocket_feature"]
+        res_type: Int64[Tensor, " batch len num_tokens=33"] = feats["res_type"]
+        profile: Float32[Tensor, " batch len num_tokens=33"] = feats["profile"]
+        deletion_mean: Float32[Tensor, " batch len 1"] = feats["deletion_mean"].unsqueeze(-1)
+        pocket_feature: Int64[Tensor, " batch len 4"] = feats["pocket_feature"]
 
         # Compute input embedding
         if self.no_atom_encoder:
@@ -109,12 +98,17 @@ class InputEmbedder(nn.Module):
             )
         else:
             a, _, _, _, _ = self.atom_attention_encoder(feats)
-        s = torch.cat([a, res_type, profile, deletion_mean, pocket_feature], dim=-1)
+        # embed size is: num_tokens*2 + 1 + 4=len(const.pocket_contact_info) + token_s
+        s: Float32[Tensor, "batch len embed=455"] = torch.cat(
+            [a, res_type, profile, deletion_mean, pocket_feature], dim=-1
+        )
         return s
 
 
 class MSAModule(nn.Module):
-    """MSA module."""
+    """MSA module, which processes multiple sequence alignments (MSA) and pairwise embeddings.
+    It consists of `msa_blocks` MSA layers that called in sequence.
+    """
 
     def __init__(
         self,
@@ -133,35 +127,27 @@ class MSAModule(nn.Module):
         num_subsampled_msa: int = 1024,
         **kwargs,
     ) -> None:
-        """Initialize the MSA module.
+        """Initializes the MSA module.
 
-        Parameters
-        ----------
-        msa_s : int
-            The MSA embedding size.
-        token_z : int
-            The token pairwise embedding size.
-        s_input_dim : int
-            The input sequence dimension.
-        msa_blocks : int
-            The number of MSA blocks.
-        msa_dropout : float
-            The MSA dropout.
-        z_dropout : float
-            The pairwise dropout.
-        pairwise_head_width : int, optional
-            The pairwise head width, by default 32
-        pairwise_num_heads : int, optional
-            The number of pairwise heads, by default 4
-        activation_checkpointing : bool, optional
-            Whether to use activation checkpointing, by default False
-        use_paired_feature : bool, optional
-            Whether to use the paired feature, by default False
-        offload_to_cpu : bool, optional
-            Whether to offload to CPU, by default False
-
+        Args:
+            msa_s: The MSA embedding size (typically 64).
+            token_z: The token pairwise embedding size (typically 128).
+            s_input_dim: The input sequence dimension (typically 455).
+            msa_blocks: The number of MSA blocks (typically 4).
+            msa_dropout: The MSA dropout (typically 0.15).
+            z_dropout: The pairwise dropout (typically 0.25).
+            pairwise_head_width: The pairwise head width. Defaults to 32.
+            pairwise_num_heads: The number of pairwise heads. Defaults to 4.
+            activation_checkpointing: Whether to use activation checkpointing. Defaults to False.
+            use_paired_feature: if true, the MSA module will use `feats["msa_paired"]` to distinguish betwee
+                simple homologs, and homologs that are paired (e.g. in a complex).
+            offload_to_cpu: Whether to offload to CPU. Defaults to False.
+            subsample_msa: whether to subsample the MSA (for efficiency).
+            kwargs: extra keyword arguments (ignored).
+            num_subsampled_msa: the number of MSA sequences to subsample from the full MSA.
         """
         super().__init__()
+        del kwargs
         self.msa_blocks = msa_blocks
         self.msa_dropout = msa_dropout
         self.z_dropout = z_dropout
@@ -171,28 +157,20 @@ class MSAModule(nn.Module):
 
         self.s_proj = nn.Linear(s_input_dim, msa_s, bias=False)
         self.msa_proj = nn.Linear(
-            const.num_tokens + 2 + int(use_paired_feature),
+            const.num_tokens + 2 + int(use_paired_feature),  # 33 + 2 + 1/0
             msa_s,
             bias=False,
         )
-        self.layers = nn.ModuleList()
-        for i in range(msa_blocks):
-            if activation_checkpointing:
-                self.layers.append(
-                    checkpoint_wrapper(
-                        MSALayer(
-                            msa_s,
-                            token_z,
-                            msa_dropout,
-                            z_dropout,
-                            pairwise_head_width,
-                            pairwise_num_heads,
-                        ),
-                        offload_to_cpu=offload_to_cpu,
-                    )
-                )
-            else:
-                self.layers.append(
+
+        def no_op_checkpoint_wrapper(module: nn.Module, offload_to_cpu: bool) -> nn.Module:
+            del offload_to_cpu
+            return module
+
+        maybe_checkpoint = checkpoint_wrapper if activation_checkpointing else no_op_checkpoint_wrapper
+
+        self.layers = nn.ModuleList(
+            [
+                maybe_checkpoint(
                     MSALayer(
                         msa_s,
                         token_z,
@@ -200,32 +178,30 @@ class MSAModule(nn.Module):
                         z_dropout,
                         pairwise_head_width,
                         pairwise_num_heads,
-                    )
+                    ),
+                    offload_to_cpu=offload_to_cpu,
                 )
+                for _ in range(msa_blocks)
+            ]
+        )
 
     def forward(
         self,
-        z: Tensor,
-        emb: Tensor,
+        z: Float[Tensor, "batch len len token_z"],
+        s_inputs: Float32[Tensor, "batch len embed=455"],
         feats: dict[str, Tensor],
         use_trifast: bool = False,
-    ) -> Tensor:
-        """Perform the forward pass.
+    ) -> Float[Tensor, "batch len len token_z"]:
+        """Processes MSA features and pairwise embeddings through a series of MSA layers
+        to refine the pairwise representation. It integrates information from both the MSA and sequence inputs.
 
-        Parameters
-        ----------
-        z : Tensor
-            The pairwise embeddings
-        emb : Tensor
-            The input embeddings
-        feats : dict[str, Tensor]
-            Input features
-
-        Returns
-        -------
-        Tensor
+        Args:
+            z: the pairwise embeddings
+            s_inputs: the input embeddings
+            feats: the input features
+            use_trifast: whether to use fast triangular attention
+        Returns:
             The output pairwise embeddings.
-
         """
         # Set chunk sizes
         if not self.training:
@@ -249,13 +225,13 @@ class MSAModule(nn.Module):
             chunk_size_tri_attn = None
 
         # Load relevant features
-        msa = feats["msa"]
-        has_deletion = feats["has_deletion"].unsqueeze(-1)
-        deletion_value = feats["deletion_value"].unsqueeze(-1)
-        is_paired = feats["msa_paired"].unsqueeze(-1)
-        msa_mask = feats["msa_mask"]
-        token_mask = feats["token_pad_mask"].float()
-        token_mask = token_mask[:, :, None] * token_mask[:, None, :]
+        msa: Int64[Tensor, "batch msa_size len num_tokens=33"] = feats["msa"]
+        has_deletion: Bool[Tensor, "batch msa_size len 1"] = feats["has_deletion"].unsqueeze(-1)
+        deletion_value: Float32[Tensor, "batch msa_size len 1"] = feats["deletion_value"].unsqueeze(-1)
+        is_paired: Float32[Tensor, "batch msa_size len 1"] = feats["msa_paired"].unsqueeze(-1)
+        msa_mask: Int64[Tensor, "batch msa_size len"] = feats["msa_mask"]
+        token_mask: Float32[Tensor, "batch len"] = feats["token_pad_mask"].float()
+        token_mask: Float32[Tensor, "batch len len"] = token_mask[:, :, None] * token_mask[:, None, :]
 
         # Compute MSA embeddings
         if self.use_paired_feature:
@@ -269,11 +245,12 @@ class MSAModule(nn.Module):
             msa_mask = msa_mask[:, msa_indices]
 
         # Compute input projections
-        m = self.msa_proj(m)
-        m = m + self.s_proj(emb).unsqueeze(1)
+        m: Float32["batch msa_size len msa_s=64"] = self.msa_proj(m)
+        m = m + self.s_proj(s_inputs).unsqueeze(1)
 
         # Perform MSA blocks
         for i in range(self.msa_blocks):
+            # z has shape (batch, len, len, token_z)
             z, m = self.layers[i](
                 z,
                 m,
@@ -301,24 +278,15 @@ class MSALayer(nn.Module):
         pairwise_head_width: int = 32,
         pairwise_num_heads: int = 4,
     ) -> None:
-        """Initialize the MSA module.
+        """Initializes the MSA module.
 
-        Parameters
-        ----------
-
-        msa_s : int
-            The MSA embedding size.
-        token_z : int
-            The pair representation dimention.
-        msa_dropout : float
-            The MSA dropout.
-        z_dropout : float
-            The pair dropout.
-        pairwise_head_width : int, optional
-            The pairwise head width, by default 32
-        pairwise_num_heads : int, optional
-            The number of pairwise heads, by default 4
-
+        Args:
+            msa_s: The MSA embedding size.
+            token_z: The pair representation dimension.
+            msa_dropout: The MSA dropout.
+            z_dropout: The pair dropout.
+            pairwise_head_width: The pairwise head width. Defaults to 32.
+            pairwise_num_heads: The number of pairwise heads. Defaults to 4.
         """
         super().__init__()
         self.msa_dropout = msa_dropout
@@ -333,12 +301,8 @@ class MSALayer(nn.Module):
 
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
         self.z_transition = Transition(
             dim=token_z,
             hidden=token_z * 4,
@@ -351,43 +315,48 @@ class MSALayer(nn.Module):
 
     def forward(
         self,
-        z: Tensor,
-        m: Tensor,
-        token_mask: Tensor,
-        msa_mask: Tensor,
+        z: Float32[Tensor, "batch len len token_z"],
+        m: Float32[Tensor, "batch msa_size len msa_s"],
+        token_mask: Float32[Tensor, "batch len len"],
+        msa_mask: Int64[Tensor, "batch msa_size len"],
         chunk_heads_pwa: bool = False,
-        chunk_size_transition_z: int = None,
-        chunk_size_transition_msa: int = None,
-        chunk_size_outer_product: int = None,
-        chunk_size_tri_attn: int = None,
+        chunk_size_transition_z: Optional[int] = None,
+        chunk_size_transition_msa: Optional[int] = None,
+        chunk_size_outer_product: Optional[int] = None,
+        chunk_size_tri_attn: Optional[int] = None,
         use_trifast: bool = False,
-    ) -> tuple[Tensor, Tensor]:
-        """Perform the forward pass.
+    ) -> tuple[Float32[Tensor, "batch len len token_z"], Float32[Tensor, "batch msa_size len msa_s"]]:
+        """Performs the forward pass of a single MSA layer.
 
-        Parameters
-        ----------
-        z : Tensor
-            The pair representation
-        m : Tensor
-            The msa representation
-        token_mask : Tensor
-            The token mask
-        msa_mask : Dict[str, Tensor]
-            The MSA mask
+        This layer updates both the MSA representation (`m`) and the pairwise representation (`z`)
+        through a series of attention, multiplicative, and transition operations, facilitating communication
+        between the two representations.
 
-        Returns
-        -------
-        Tensor
-            The output pairwise embeddings.
-        Tensor
-            The output MSA embeddings.
+        Args:
+            z: The current pairwise representation tensor
+            m: The current MSA representation tensor
+            token_mask: A boolean mask for valid tokens (sequence positions), typically used for padding.
+            msa_mask: A boolean mask for valid MSA sequences, typically used for padding.
+            chunk_heads_pwa: A boolean indicating whether to chunk heads in PairWeightedAveraging for memory
+                efficiency
+            chunk_size_transition_z: the chunk size for the pairwise transition operation.
+                If None, no chunking is applied.
+            chunk_size_transition_msa: the chunk size for the MSA transition operation. If None, no chunking is applied.
+            chunk_size_outer_product: the chunk size for the outer product mean operation.
+                If None, no chunking is applied.
+            chunk_size_tri_attn: the chunk size for triangular attention operations.
+                If None, no chunking is applied.
+            use_trifast: A boolean indicating whether to use an optimized (faster) implementation for
+                triangular attention operations. Defaults to False.
 
+        Returns:
+            A tuple containing:
+            - z: The updated pairwise representation tensor.
+            - m: The updated MSA representation tensor.
         """
         # Communication to MSA stack
         msa_dropout = get_dropout_mask(self.msa_dropout, m, self.training)
-        m = m + msa_dropout * self.pair_weighted_averaging(
-            m, z, token_mask, chunk_heads_pwa
-        )
+        m = m + msa_dropout * self.pair_weighted_averaging(m, z, token_mask, chunk_heads_pwa)
         m = m + self.msa_transition(m, chunk_size_transition_msa)
 
         # Communication to pairwise stack
@@ -408,7 +377,7 @@ class MSALayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.z_dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.z_dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=token_mask,
@@ -468,6 +437,7 @@ class PairformerModule(nn.Module):
 
         """
         super().__init__()
+        del kwargs
         self.token_z = token_z
         self.num_blocks = num_blocks
         self.dropout = dropout
@@ -526,7 +496,8 @@ class PairformerModule(nn.Module):
             The token mask
         pair_mask : Tensor
             The pairwise mask
-        Returns
+
+        Returns:
         -------
         Tensor
             The updated sequence embeddings.
@@ -543,9 +514,7 @@ class PairformerModule(nn.Module):
             chunk_size_tri_attn = None
 
         for layer in self.layers:
-            s, z = layer(
-                s, z, mask, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast
-            )
+            s, z = layer(s, z, mask, pair_mask, chunk_size_tri_attn, use_trifast=use_trifast)
         return s, z
 
 
@@ -595,12 +564,8 @@ class PairformerLayer(nn.Module):
             self.attention = AttentionPairBias(token_s, token_z, num_heads)
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
         if not self.no_update_s:
             self.transition_s = Transition(token_s, token_s * 4)
         self.transition_z = Transition(token_z, token_z * 4)
@@ -630,7 +595,7 @@ class PairformerLayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=pair_mask,
@@ -673,7 +638,7 @@ class DistogramModule(nn.Module):
         z : Tensor
             The pairwise embeddings
 
-        Returns
+        Returns:
         -------
         Tensor
             The predicted distogram.

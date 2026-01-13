@@ -1,11 +1,19 @@
 import torch
+from jaxtyping import Float32
 from torch import Tensor, nn
 
 import boltz.model.layers.initialize as init
 
 
 class PairWeightedAveraging(nn.Module):
-    """Pair weighted averaging layer."""
+    """Pair weighted averaging layer.
+
+    This module facilitates communication from the pairwise representation (z) to the MSA
+    representation (m). It allows each MSA sequence to gather information from all
+    other positions in the sequence, with the weighting of this gathering being
+    conditioned by the pairwise features. This is analogous to the MSA-to-Pair communication
+    in Alphafold's Evo-former blocks.
+    """
 
     def __init__(
         self,
@@ -15,21 +23,14 @@ class PairWeightedAveraging(nn.Module):
         num_heads: int,
         inf: float = 1e6,
     ) -> None:
-        """Initialize the pair weighted averaging layer.
+        """Initializes the pair weighted averaging layer.
 
-        Parameters
-        ----------
-        c_m: int
-            The dimension of the input sequence.
-        c_z: int
-            The dimension of the input pairwise tensor.
-        c_h: int
-            The dimension of the hidden.
-        num_heads: int
-            The number of heads.
-        inf: float
-            The value to use for masking, default 1e6.
-
+        Args:
+            c_m: The embedding dimension of the input MSA tensor.
+            c_z: The embedding dimension of the input pairwise tensor.
+            c_h: The hidden dimension per attention head.
+            num_heads: The number of attention heads to use.
+            inf: A large positive value used for masking padded elements in attention calculations.
         """
         super().__init__()
         self.c_m = c_m
@@ -48,24 +49,26 @@ class PairWeightedAveraging(nn.Module):
         init.final_init_(self.proj_o.weight)
 
     def forward(
-        self, m: Tensor, z: Tensor, mask: Tensor, chunk_heads: False = bool
-    ) -> Tensor:
-        """Forward pass.
+        self,
+        m: Float32[Tensor, "batch msa_size len msa_s"],
+        z: Float32[Tensor, "batch len len token_z"],
+        mask: Float32[Tensor, "batch len len"],
+        chunk_heads: False = bool,
+    ) -> Float32[Tensor, "batch msa_size len msa_s"]:
+        """Performs the forward pass of the pair weighted averaging.
 
-        Parameters
-        ----------
-        m : torch.Tensor
-            The input sequence tensor (B, S, N, D)
-        z : torch.Tensor
-            The input pairwise tensor (B, N, N, D)
-        mask : torch.Tensor
-            The pairwise mask tensor (B, N, N)
+        It updates the MSA representation `m` by incorporating contextual information
+        from the pairwise representation `z` through an attention-like mechanism.
 
-        Returns
-        -------
-        torch.Tensor
-            The output sequence tensor (B, S, N, D)
+        Args:
+            m: The input MSA representation tensor.
+            z: The input pairwise representation tensor.
+            mask: A 0/1 mask tensor for sequence padding.
+            chunk_heads: A boolean flag indicating whether to compute attention heads sequentially
+                         for memory efficiency during inference.
 
+        Returns:
+            The updated MSA representation tensor, with the same shape as `m`.
         """
         # Compute layer norms
         m = self.norm_m(m)
@@ -75,16 +78,10 @@ class PairWeightedAveraging(nn.Module):
             # Compute heads sequentially
             o_chunks = []
             for head_idx in range(self.num_heads):
-                sliced_weight_proj_m = self.proj_m.weight[
-                    head_idx * self.c_h : (head_idx + 1) * self.c_h, :
-                ]
-                sliced_weight_proj_g = self.proj_g.weight[
-                    head_idx * self.c_h : (head_idx + 1) * self.c_h, :
-                ]
+                sliced_weight_proj_m = self.proj_m.weight[head_idx * self.c_h : (head_idx + 1) * self.c_h, :]
+                sliced_weight_proj_g = self.proj_g.weight[head_idx * self.c_h : (head_idx + 1) * self.c_h, :]
                 sliced_weight_proj_z = self.proj_z.weight[head_idx : (head_idx + 1), :]
-                sliced_weight_proj_o = self.proj_o.weight[
-                    :, head_idx * self.c_h : (head_idx + 1) * self.c_h
-                ]
+                sliced_weight_proj_o = self.proj_o.weight[:, head_idx * self.c_h : (head_idx + 1) * self.c_h]
 
                 # Project input tensors
                 v: Tensor = m @ sliced_weight_proj_m.T

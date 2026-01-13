@@ -28,22 +28,16 @@ def load_input(
     msa_dir: Path,
     constraints_dir: Optional[Path] = None,
 ) -> Input:
-    """Load the given input data.
+    """Loads the given input data.
 
-    Parameters
-    ----------
-    record : Record
-        The record to load.
-    target_dir : Path
-        The path to the data directory.
-    msa_dir : Path
-        The path to msa directory.
+    Args:
+        record: The record to load.
+        target_dir: The path to the data directory.
+        msa_dir: The path to the MSA directory.
+        constraints_dir: The path to the residue constraints directory.
 
-    Returns
-    -------
-    Input
+    Returns:
         The loaded input.
-
     """
     # Load the structure
     structure = np.load(target_dir / f"{record.id}.npz")
@@ -67,9 +61,7 @@ def load_input(
 
     residue_constraints = None
     if constraints_dir is not None:
-        residue_constraints = ResidueConstraints.load(
-            constraints_dir / f"{record.id}.npz"
-        )
+        residue_constraints = ResidueConstraints.load(constraints_dir / f"{record.id}.npz")
 
     return Input(structure, msas, record, residue_constraints)
 
@@ -82,7 +74,7 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     data : List[Dict[str, Tensor]]
         The data to collate.
 
-    Returns
+    Returns:
     -------
     Dict[str, Tensor]
         The collated data.
@@ -96,7 +88,7 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     for key in keys:
         values = [d[key] for d in data]
 
-        if key not in [
+        if key not in {
             "all_coords",
             "all_resolved_mask",
             "crop_to_all_atom_map",
@@ -104,7 +96,7 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
             "amino_acids_symmetries",
             "ligand_symmetries",
             "record",
-        ]:
+        }:
             # Check if all have the same shape
             shape = values[0].shape
             if not all(v.shape == shape for v in values):
@@ -119,7 +111,13 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
 
 
 class PredictionDataset(torch.utils.data.Dataset):
-    """Base iterable dataset."""
+    """Dataset for preparing data for Boltz-1 inference.
+
+    Loads molecular records, tokenizes their structures, and computes
+    a comprehensive set of features (token, atom, MSA, and optional symmetries/constraints)
+    suitable for feeding into the Boltz-1 model. It handles potential loading and
+    featurization errors by skipping problematic records.
+    """
 
     def __init__(
         self,
@@ -128,17 +126,14 @@ class PredictionDataset(torch.utils.data.Dataset):
         msa_dir: Path,
         constraints_dir: Optional[Path] = None,
     ) -> None:
-        """Initialize the training dataset.
+        """Initializes the prediction dataset.
 
-        Parameters
-        ----------
-        manifest : Manifest
-            The manifest to load data from.
-        target_dir : Path
-            The path to the target directory.
-        msa_dir : Path
-            The path to the msa directory.
-
+        Args:
+            manifest: The manifest object containing a list of records (molecular IDs and associated metadata) to
+                be processed.
+            target_dir: The path to the directory containing the molecular structure files
+            msa_dir: The path to the directory containing the Multiple Sequence Alignment (MSA) files
+            constraints_dir: An optional path to the directory containing residue constraint files
         """
         super().__init__()
         self.manifest = manifest
@@ -149,13 +144,19 @@ class PredictionDataset(torch.utils.data.Dataset):
         self.featurizer = BoltzFeaturizer()
 
     def __getitem__(self, idx: int) -> dict:
-        """Get an item from the dataset.
+        """Gets a processed feature dictionary for a single record from the dataset.
 
-        Returns
-        -------
-        Dict[str, Tensor]
-            The sampled data features.
+        This method loads a record, tokenizes its associated structure, applies
+        featurization (including handling inference-specific pocket constraints),
+        and returns a dictionary of prepared tensors suitable for model input.
+        Skips to the next record if any step fails.
 
+        Args:
+            idx: The integer index of the record to retrieve from the manifest.
+
+        Returns:
+            A dictionary containing the sampled and computed data features (tensors)
+            for the specified record, along with the original record object.
         """
         # Get a sample from the dataset
         record = self.manifest.records[idx]
@@ -169,14 +170,14 @@ class PredictionDataset(torch.utils.data.Dataset):
                 self.constraints_dir,
             )
         except Exception as e:  # noqa: BLE001
-            print(f"Failed to load input for {record.id} with error {e}. Skipping.")  # noqa: T201
+            print(f"Failed to load input for {record.id} with error {e}. Skipping.")
             return self.__getitem__(0)
 
         # Tokenize structure
         try:
             tokenized = self.tokenizer.tokenize(input_data)
         except Exception as e:  # noqa: BLE001
-            print(f"Tokenizer failed on {record.id} with error {e}. Skipping.")  # noqa: T201
+            print(f"Tokenizer failed on {record.id} with error {e}. Skipping.")
             return self.__getitem__(0)
 
         # Inference specific options
@@ -202,7 +203,7 @@ class PredictionDataset(torch.utils.data.Dataset):
                 compute_constraint_features=True,
             )
         except Exception as e:  # noqa: BLE001
-            print(f"Featurizer failed on {record.id} with error {e}. Skipping.")  # noqa: T201
+            print(f"Featurizer failed on {record.id} with error {e}. Skipping.")
             return self.__getitem__(0)
 
         features["record"] = record
@@ -211,7 +212,7 @@ class PredictionDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         """Get the length of the dataset.
 
-        Returns
+        Returns:
         -------
         int
             The length of the dataset.
@@ -249,7 +250,7 @@ class BoltzInferenceDataModule(pl.LightningDataModule):
     def predict_dataloader(self) -> DataLoader:
         """Get the training dataloader.
 
-        Returns
+        Returns:
         -------
         DataLoader
             The training dataloader.
@@ -270,11 +271,11 @@ class BoltzInferenceDataModule(pl.LightningDataModule):
             collate_fn=collate,
         )
 
+    @staticmethod
     def transfer_batch_to_device(
-        self,
         batch: dict,
         device: torch.device,
-        dataloader_idx: int,  # noqa: ARG002
+        dataloader_idx: int,
     ) -> dict:
         """Transfer a batch to the given device.
 
@@ -287,14 +288,15 @@ class BoltzInferenceDataModule(pl.LightningDataModule):
         dataloader_idx : int
             The dataloader index.
 
-        Returns
+        Returns:
         -------
         np.Any
             The transferred batch.
 
         """
-        for key in batch:
-            if key not in [
+        del dataloader_idx
+        for key, value in batch.items():
+            if key not in {
                 "all_coords",
                 "all_resolved_mask",
                 "crop_to_all_atom_map",
@@ -302,6 +304,6 @@ class BoltzInferenceDataModule(pl.LightningDataModule):
                 "amino_acids_symmetries",
                 "ligand_symmetries",
                 "record",
-            ]:
-                batch[key] = batch[key].to(device)
+            }:
+                batch[key] = value.to(device)
         return batch

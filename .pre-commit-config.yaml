@@ -1,0 +1,40 @@
+fail_fast: true
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^.*\.jinja|^.*\.pdb
+      - id: check-toml
+      - id: mixed-line-ending
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+
+  # Format first...
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff-format
+        description: "Run 'ruff format'."
+        entry: mise exec ruff -- ruff format --force-exclude
+        language: python
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+
+  # ...then lint.
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: mise exec ruff -- ruff check --force-exclude --fix
+        language: python
+        types_or: [python, pyi]
+        require_serial: true
+        minimum_pre_commit_version: "2.9.2"
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint-fix
+        args: ["--disable", "MD046", "MD013", "MD033", "--"]
+

@@ -13,7 +13,7 @@ from boltz.data.pad import pad_dim
 from boltz.model.loss.confidence import lddt_dist
 
 
-def load_molecules(moldir: str, molecules: list[str]) -> dict[str, Mol]:
+def load_molecules(moldir: Path, molecules: list[str]) -> dict[str, Mol]:
     """Load the given input data.
 
     Parameters
@@ -23,23 +23,23 @@ def load_molecules(moldir: str, molecules: list[str]) -> dict[str, Mol]:
     molecules : list[str]
         The molecules to load.
 
-    Returns
+    Returns:
     -------
     dict[str, Mol]
         The loaded molecules.
     """
     loaded_mols = {}
     for molecule in molecules:
-        path = Path(moldir) / f"{molecule}.pkl"
+        path = moldir / f"{molecule}.pkl"
         if not path.exists():
             msg = f"CCD component {molecule} not found!"
             raise ValueError(msg)
         with path.open("rb") as f:
-            loaded_mols[molecule] = pickle.load(f)  # noqa: S301
+            loaded_mols[molecule] = pickle.load(f)
     return loaded_mols
 
 
-def load_canonicals(moldir: str) -> dict[str, Mol]:
+def load_canonicals(moldir: Path) -> dict[str, Mol]:
     """Load the given input data.
 
     Parameters
@@ -47,7 +47,7 @@ def load_canonicals(moldir: str) -> dict[str, Mol]:
     moldir : str
         The molecules to load.
 
-    Returns
+    Returns:
     -------
     dict[str, Mol]
         The loaded molecules.
@@ -66,7 +66,7 @@ def load_all_molecules(moldir: str) -> dict[str, Mol]:
     molecules : list[str]
         The molecules to load.
 
-    Returns
+    Returns:
     -------
     dict[str, Mol]
         The loaded molecules.
@@ -77,11 +77,11 @@ def load_all_molecules(moldir: str) -> dict[str, Mol]:
     for path in tqdm(files, total=len(files), desc="Loading molecules", leave=False):
         mol_name = path.stem
         with path.open("rb") as f:
-            loaded_mols[mol_name] = pickle.load(f)  # noqa: S301
+            loaded_mols[mol_name] = pickle.load(f)
     return loaded_mols
 
 
-def get_symmetries(mols: dict[str, Mol]) -> dict:  # noqa: PLR0912
+def get_symmetries(mols: dict[str, Mol]) -> dict:
     """Create a dictionary for the ligand symmetries.
 
     Parameters
@@ -89,7 +89,7 @@ def get_symmetries(mols: dict[str, Mol]) -> dict:  # noqa: PLR0912
     path : str
         The path to the ligand symmetries.
 
-    Returns
+    Returns:
     -------
     dict
         The ligand symmetries.
@@ -98,20 +98,14 @@ def get_symmetries(mols: dict[str, Mol]) -> dict:  # noqa: PLR0912
     symmetries = {}
     for key, mol in mols.items():
         try:
-            sym = pickle.loads(bytes.fromhex(mol.GetProp("symmetries")))  # noqa: S301
+            sym = pickle.loads(bytes.fromhex(mol.GetProp("symmetries")))
 
             if mol.HasProp("pb_edge_index"):
-                edge_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("pb_edge_index"))
-                ).astype(np.int64)  # noqa: S301
-                lower_bounds = pickle.loads(
-                    bytes.fromhex(mol.GetProp("pb_lower_bounds"))
-                )  # noqa: S301
-                upper_bounds = pickle.loads(
-                    bytes.fromhex(mol.GetProp("pb_upper_bounds"))
-                )  # noqa: S301
-                bond_mask = pickle.loads(bytes.fromhex(mol.GetProp("pb_bond_mask")))  # noqa: S301
-                angle_mask = pickle.loads(bytes.fromhex(mol.GetProp("pb_angle_mask")))  # noqa: S301
+                edge_index = pickle.loads(bytes.fromhex(mol.GetProp("pb_edge_index"))).astype(np.int64)
+                lower_bounds = pickle.loads(bytes.fromhex(mol.GetProp("pb_lower_bounds")))
+                upper_bounds = pickle.loads(bytes.fromhex(mol.GetProp("pb_upper_bounds")))
+                bond_mask = pickle.loads(bytes.fromhex(mol.GetProp("pb_bond_mask")))
+                angle_mask = pickle.loads(bytes.fromhex(mol.GetProp("pb_angle_mask")))
             else:
                 edge_index = np.empty((2, 0), dtype=np.int64)
                 lower_bounds = np.array([], dtype=np.float32)
@@ -120,51 +114,39 @@ def get_symmetries(mols: dict[str, Mol]) -> dict:  # noqa: PLR0912
                 angle_mask = np.array([], dtype=np.float32)
 
             if mol.HasProp("chiral_atom_index"):
-                chiral_atom_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("chiral_atom_index"))
-                ).astype(np.int64)
-                chiral_check_mask = pickle.loads(
-                    bytes.fromhex(mol.GetProp("chiral_check_mask"))
-                ).astype(np.int64)
-                chiral_atom_orientations = pickle.loads(
-                    bytes.fromhex(mol.GetProp("chiral_atom_orientations"))
-                )
+                chiral_atom_index = pickle.loads(bytes.fromhex(mol.GetProp("chiral_atom_index"))).astype(np.int64)
+                chiral_check_mask = pickle.loads(bytes.fromhex(mol.GetProp("chiral_check_mask"))).astype(np.int64)
+                chiral_atom_orientations = pickle.loads(bytes.fromhex(mol.GetProp("chiral_atom_orientations")))
             else:
                 chiral_atom_index = np.empty((4, 0), dtype=np.int64)
                 chiral_check_mask = np.array([], dtype=bool)
                 chiral_atom_orientations = np.array([], dtype=bool)
 
             if mol.HasProp("stereo_bond_index"):
-                stereo_bond_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("stereo_bond_index"))
-                ).astype(np.int64)
-                stereo_check_mask = pickle.loads(
-                    bytes.fromhex(mol.GetProp("stereo_check_mask"))
-                ).astype(np.int64)
-                stereo_bond_orientations = pickle.loads(
-                    bytes.fromhex(mol.GetProp("stereo_bond_orientations"))
-                )
+                stereo_bond_index = pickle.loads(bytes.fromhex(mol.GetProp("stereo_bond_index"))).astype(np.int64)
+                stereo_check_mask = pickle.loads(bytes.fromhex(mol.GetProp("stereo_check_mask"))).astype(np.int64)
+                stereo_bond_orientations = pickle.loads(bytes.fromhex(mol.GetProp("stereo_bond_orientations")))
             else:
                 stereo_bond_index = np.empty((4, 0), dtype=np.int64)
                 stereo_check_mask = np.array([], dtype=bool)
                 stereo_bond_orientations = np.array([], dtype=bool)
 
             if mol.HasProp("aromatic_5_ring_index"):
-                aromatic_5_ring_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("aromatic_5_ring_index"))
-                ).astype(np.int64)
+                aromatic_5_ring_index = pickle.loads(bytes.fromhex(mol.GetProp("aromatic_5_ring_index"))).astype(
+                    np.int64
+                )
             else:
                 aromatic_5_ring_index = np.empty((5, 0), dtype=np.int64)
             if mol.HasProp("aromatic_6_ring_index"):
-                aromatic_6_ring_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("aromatic_6_ring_index"))
-                ).astype(np.int64)
+                aromatic_6_ring_index = pickle.loads(bytes.fromhex(mol.GetProp("aromatic_6_ring_index"))).astype(
+                    np.int64
+                )
             else:
                 aromatic_6_ring_index = np.empty((6, 0), dtype=np.int64)
             if mol.HasProp("planar_double_bond_index"):
-                planar_double_bond_index = pickle.loads(
-                    bytes.fromhex(mol.GetProp("planar_double_bond_index"))
-                ).astype(np.int64)
+                planar_double_bond_index = pickle.loads(bytes.fromhex(mol.GetProp("planar_double_bond_index"))).astype(
+                    np.int64
+                )
             else:
                 planar_double_bond_index = np.empty((6, 0), dtype=np.int64)
 
@@ -187,7 +169,7 @@ def get_symmetries(mols: dict[str, Mol]) -> dict:  # noqa: PLR0912
                 aromatic_6_ring_index,
                 planar_double_bond_index,
             )
-        except Exception as e:  # noqa: BLE001, PERF203, S110
+        except Exception:  # noqa: BLE001, PERF203
             pass
 
     return symmetries
@@ -197,13 +179,11 @@ def compute_symmetry_idx_dictionary(data):
     # Compute the symmetry index dictionary
     total_count = 0
     all_coords = []
-    for i, chain in enumerate(data.chains):
+    for chain in data.chains:
         chain.start_idx = total_count
-        for j, token in enumerate(chain.tokens):
+        for token in chain.tokens:
             token.start_idx = total_count - chain.start_idx
-            all_coords.extend(
-                [[atom.coords.x, atom.coords.y, atom.coords.z] for atom in token.atoms]
-            )
+            all_coords.extend([[atom.coords.x, atom.coords.y, atom.coords.z] for atom in token.atoms])
             total_count += len(token.atoms)
     return all_coords
 
@@ -214,17 +194,12 @@ def get_current_idx_list(data):
         if chain.in_crop:
             for token in chain.tokens:
                 if token.in_crop:
-                    idx.extend(
-                        [
-                            chain.start_idx + token.start_idx + i
-                            for i in range(len(token.atoms))
-                        ]
-                    )
+                    idx.extend([chain.start_idx + token.start_idx + i for i in range(len(token.atoms))])
     return idx
 
 
-def all_different_after_swap(l):
-    final = [s[-1] for s in l]
+def all_different_after_swap(lst):
+    final = [s[-1] for s in lst]
     return len(final) == len(set(final))
 
 
@@ -234,19 +209,13 @@ def minimum_lddt_symmetry_coords(
     index_batch: int,
 ):
     all_coords = feats["all_coords"][index_batch].unsqueeze(0).to(coords)
-    all_resolved_mask = (
-        feats["all_resolved_mask"][index_batch].to(coords).to(torch.bool)
-    )
-    crop_to_all_atom_map = (
-        feats["crop_to_all_atom_map"][index_batch].to(coords).to(torch.long)
-    )
+    all_resolved_mask = feats["all_resolved_mask"][index_batch].to(coords).to(torch.bool)
+    crop_to_all_atom_map = feats["crop_to_all_atom_map"][index_batch].to(coords).to(torch.long)
     chain_symmetries = feats["chain_swaps"][index_batch]
     amino_acids_symmetries = feats["amino_acids_symmetries"][index_batch]
     ligand_symmetries = feats["ligand_symmetries"][index_batch]
 
-    dmat_predicted = torch.cdist(
-        coords[:, : len(crop_to_all_atom_map)], coords[:, : len(crop_to_all_atom_map)]
-    )
+    dmat_predicted = torch.cdist(coords[:, : len(crop_to_all_atom_map)], coords[:, : len(crop_to_all_atom_map)])
 
     # Check best symmetry on chain swap
     best_true_coords = all_coords[:, crop_to_all_atom_map].clone()
@@ -255,7 +224,7 @@ def minimum_lddt_symmetry_coords(
     for c in chain_symmetries:
         true_all_coords = all_coords.clone()
         true_all_resolved_mask = all_resolved_mask.clone()
-        for start1, end1, start2, end2, chainidx1, chainidx2 in c:
+        for start1, end1, start2, end2, _chainidx1, _chainidx2 in c:
             true_all_coords[:, start1:end1] = all_coords[:, start2:end2]
             true_all_resolved_mask[start1:end1] = all_resolved_mask[start2:end2]
         true_coords = true_all_coords[:, crop_to_all_atom_map]
@@ -267,9 +236,7 @@ def minimum_lddt_symmetry_coords(
             * (1 - torch.eye(len(true_resolved_mask))).to(true_resolved_mask)
         )
 
-        lddt = lddt_dist(
-            dmat_predicted, dmat_true, pair_mask, cutoff=15.0, per_atom=False
-        )[0]
+        lddt = lddt_dist(dmat_predicted, dmat_true, pair_mask, cutoff=15.0, per_atom=False)[0]
         lddt = lddt.item()
 
         if lddt > best_lddt and torch.sum(true_resolved_mask) > 3:
@@ -285,14 +252,11 @@ def minimum_lddt_symmetry_coords(
 
         indices = set()
         for c in symmetric_amino_or_lig:
-            for i, j in c:
-                indices.add(i)
-        indices = sorted(list(indices))
+            indices.update(i for i, j in c)
+        indices = sorted(indices)
         indices = torch.from_numpy(np.asarray(indices)).to(true_coords.device).long()
         pred_coords_subset = coords[:, : len(crop_to_all_atom_map)][:, indices]
-        sub_dmat_pred = torch.cdist(
-            coords[:, : len(crop_to_all_atom_map)], pred_coords_subset
-        )
+        sub_dmat_pred = torch.cdist(coords[:, : len(crop_to_all_atom_map)], pred_coords_subset)
 
         for c in symmetric_amino_or_lig:
             # starting from greedy best, try to swap the atoms
@@ -308,30 +272,24 @@ def minimum_lddt_symmetry_coords(
             sub_dmat_true = torch.cdist(true_coords, true_coords_subset)
             sub_dmat_new_true = torch.cdist(new_true_coords, new_true_coords_subset)
 
-            sub_true_pair_lddt = (
-                true_resolved_mask[:, None] * true_resolved_mask[None, indices]
-            )
+            sub_true_pair_lddt = true_resolved_mask[:, None] * true_resolved_mask[None, indices]
             sub_true_pair_lddt[indices] = (
-                sub_true_pair_lddt[indices]
-                * (1 - torch.eye(len(indices))).to(sub_true_pair_lddt).bool()
+                sub_true_pair_lddt[indices] * (1 - torch.eye(len(indices))).to(sub_true_pair_lddt).bool()
             )
 
-            sub_new_true_pair_lddt = (
-                new_true_resolved_mask[:, None] * new_true_resolved_mask[None, indices]
-            )
+            sub_new_true_pair_lddt = new_true_resolved_mask[:, None] * new_true_resolved_mask[None, indices]
             sub_new_true_pair_lddt[indices] = (
-                sub_new_true_pair_lddt[indices]
-                * (1 - torch.eye(len(indices))).to(sub_true_pair_lddt).bool()
+                sub_new_true_pair_lddt[indices] * (1 - torch.eye(len(indices))).to(sub_true_pair_lddt).bool()
             )
 
-            lddt, total = lddt_dist(
+            lddt, _ = lddt_dist(
                 sub_dmat_pred,
                 sub_dmat_true,
                 sub_true_pair_lddt,
                 cutoff=15.0,
                 per_atom=False,
             )
-            new_lddt, new_total = lddt_dist(
+            new_lddt, _ = lddt_dist(
                 sub_dmat_pred,
                 sub_dmat_new_true,
                 sub_new_true_pair_lddt,
@@ -404,31 +362,21 @@ def minimum_lddt_symmetry_dist(
             # fix the distogram by replacing first the columns then the rows
             disto_temp = new_disto_target.clone()
             for i, j in c:
-                new_disto_target[:, atom_to_token_map[i]] = disto_temp[
-                    :, atom_to_token_map[j]
-                ]
+                new_disto_target[:, atom_to_token_map[i]] = disto_temp[:, atom_to_token_map[j]]
                 indices.append(atom_to_token_map[i].item())
             disto_temp = new_disto_target.clone()
             for i, j in c:
-                new_disto_target[atom_to_token_map[i], :] = disto_temp[
-                    atom_to_token_map[j], :
-                ]
+                new_disto_target[atom_to_token_map[i], :] = disto_temp[atom_to_token_map[j], :]
 
-            indices = (
-                torch.from_numpy(np.asarray(indices)).to(disto_target.device).long()
-            )
+            indices = torch.from_numpy(np.asarray(indices)).to(disto_target.device).long()
 
             pred_distogram_subset = pred_distogram[:, indices]
             disto_target_subset = disto_target[:, indices]
             new_disto_target_subset = new_disto_target[:, indices]
             mask_subset = mask[:, indices]
 
-            loss = compute_single_distogram_loss(
-                pred_distogram_subset, disto_target_subset, mask_subset
-            )
-            new_loss = compute_single_distogram_loss(
-                pred_distogram_subset, new_disto_target_subset, mask_subset
-            )
+            loss = compute_single_distogram_loss(pred_distogram_subset, disto_target_subset, mask_subset)
+            new_loss = compute_single_distogram_loss(pred_distogram_subset, new_disto_target_subset, mask_subset)
             loss_improvement = (loss - new_loss) * len(indices)
 
             if loss_improvement > best_loss_improvement:
@@ -446,7 +394,6 @@ def minimum_lddt_symmetry_dist(
     # update features to be used in diffusion and in distogram loss
     feats["disto_target"][index_batch] = disto_target
     feats["coords"][index_batch] = coords
-    return
 
 
 def compute_all_coords_mask(structure):
@@ -455,19 +402,13 @@ def compute_all_coords_mask(structure):
     all_coords = []
     all_coords_crop_mask = []
     all_resolved_mask = []
-    for i, chain in enumerate(structure.chains):
+    for chain in structure.chains:
         chain.start_idx = total_count
-        for j, token in enumerate(chain.tokens):
+        for token in chain.tokens:
             token.start_idx = total_count - chain.start_idx
-            all_coords.extend(
-                [[atom.coords.x, atom.coords.y, atom.coords.z] for atom in token.atoms]
-            )
-            all_coords_crop_mask.extend(
-                [token.in_crop for _ in range(len(token.atoms))]
-            )
-            all_resolved_mask.extend(
-                [token.is_present for _ in range(len(token.atoms))]
-            )
+            all_coords.extend([[atom.coords.x, atom.coords.y, atom.coords.z] for atom in token.atoms])
+            all_coords_crop_mask.extend([token.in_crop for _ in range(len(token.atoms))])
+            all_resolved_mask.extend([token.is_present for _ in range(len(token.atoms))])
             total_count += len(token.atoms)
     if len(all_coords_crop_mask) != len(all_resolved_mask):
         pass
@@ -525,22 +466,16 @@ def get_chain_symmetries(cropped, max_n_symmetries=100):
     crop_to_all_atom_map = []
     for token in cropped.tokens:
         chain_idx = chain_asym_id.index(token["asym_id"])
-        start = (
-            chain_atom_idx[chain_idx] - original_atom_idx[chain_idx] + token["atom_idx"]
-        )
+        start = chain_atom_idx[chain_idx] - original_atom_idx[chain_idx] + token["atom_idx"]
         crop_to_all_atom_map.append(np.arange(start, start + token["atom_num"]))
     crop_to_all_atom_map = np.concatenate(crop_to_all_atom_map, axis=0)
 
     # Compute the connections edge index for covalent bonds
     all_atom_to_crop_map = np.zeros(all_coords.shape[0], dtype=np.int64)
-    all_atom_to_crop_map[crop_to_all_atom_map.astype(np.int64)] = np.arange(
-        crop_to_all_atom_map.shape[0]
-    )
+    all_atom_to_crop_map[crop_to_all_atom_map.astype(np.int64)] = np.arange(crop_to_all_atom_map.shape[0])
     connections_edge_index = []
     for connection in structure.bonds:
-        if (connection["chain_1"] == connection["chain_2"]) and (
-            connection["res_1"] == connection["res_2"]
-        ):
+        if (connection["chain_1"] == connection["chain_2"]) and (connection["res_1"] == connection["res_2"]):
             continue
         connections_edge_index.append([connection["atom_1"], connection["atom_2"]])
     if len(connections_edge_index) > 0:
@@ -561,26 +496,18 @@ def get_chain_symmetries(cropped, max_n_symmetries=100):
             for j, chain2 in enumerate(structure.chains):
                 start2 = chain_atom_idx[j]
                 end2 = start2 + chain_atom_num[j]
-                if (
-                    chain["entity_id"] == chain2["entity_id"]
-                    and end - start == end2 - start2
-                ):
+                if chain["entity_id"] == chain2["entity_id"] and end - start == end2 - start2:
                     possible_swaps.append((start, end, start2, end2, i, j))
             swaps.append(possible_swaps)
 
         found = False
-        for symmetry_idx, symmetry in enumerate(symmetries):
+        for symmetry in symmetries:
             j = symmetry[0][0]
             chain2 = structure.chains[j]
             start2 = chain_atom_idx[j]
             end2 = start2 + chain_atom_num[j]
-            if (
-                chain["entity_id"] == chain2["entity_id"]
-                and end - start == end2 - start2
-            ):
-                symmetries[symmetry_idx].append(
-                    (i, start, end, chain_in_crop[i], chain["mol_type"])
-                )
+            if chain["entity_id"] == chain2["entity_id"] and end - start == end2 - start2:
+                symmetry.append((i, start, end, chain_in_crop[i], chain["mol_type"]))
                 found = True
         if not found:
             symmetries.append([(i, start, end, chain_in_crop[i], chain["mol_type"])])
@@ -604,9 +531,7 @@ def get_chain_symmetries(cropped, max_n_symmetries=100):
     features = {}
     features["all_coords"] = torch.Tensor(all_coords)  # axis=1 with ensemble
 
-    features["all_resolved_mask"] = torch.Tensor(
-        np.concatenate(all_resolved_mask, axis=0)
-    )
+    features["all_resolved_mask"] = torch.Tensor(np.concatenate(all_resolved_mask, axis=0))
     features["crop_to_all_atom_map"] = torch.Tensor(crop_to_all_atom_map)
     features["chain_symmetries"] = symmetries
     features["connections_edge_index"] = torch.tensor(connections_edge_index)
@@ -624,9 +549,7 @@ def get_amino_acids_symmetries(cropped):
         if len(symmetries) > 0:
             residue_swaps = []
             for sym in symmetries:
-                sym_new_idx = [
-                    (i + start_index_crop, j + start_index_crop) for i, j in sym
-                ]
+                sym_new_idx = [(i + start_index_crop, j + start_index_crop) for i, j in sym]
                 residue_swaps.append(sym_new_idx)
             swaps.append(residue_swaps)
         start_index_crop += token["atom_num"]
@@ -666,13 +589,9 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
         residue_idx = token["res_idx"] + structure.chains[token["asym_id"]]["res_idx"]
         mol_name = structure.residues[residue_idx]["name"]
         atom_idx = structure.residues[residue_idx]["atom_idx"]
-        mol_atom_names = structure.atoms[
-            atom_idx : atom_idx + structure.residues[residue_idx]["atom_num"]
-        ]["name"]
+        mol_atom_names = structure.atoms[atom_idx : atom_idx + structure.residues[residue_idx]["atom_num"]]["name"]
         if mol_name not in const.ref_symmetries:
-            index_mols.append(
-                (mol_name, atom_count - token["atom_num"], mol_id, mol_atom_names)
-            )
+            index_mols.append((mol_name, atom_count - token["atom_num"], mol_id, mol_atom_names))
 
     # for each molecule, get the symmetries
     molecule_symmetries = []
@@ -699,7 +618,7 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
         [],
     )
     for mol_name, start_mol, mol_id, mol_atom_names in index_mols:
-        if not mol_name in symmetries:
+        if mol_name not in symmetries:
             continue
         else:
             swaps = []
@@ -722,10 +641,7 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
                 planar_double_bond_index,
             ) = symmetries[mol_name]
             # Get indices of mol_atom_names_ccd that are in mol_atom_names
-            ccd_to_valid_ids = {
-                mol_atom_names_ccd.index(name): i
-                for i, name in enumerate(mol_atom_names)
-            }
+            ccd_to_valid_ids = {mol_atom_names_ccd.index(name): i for i, name in enumerate(mol_atom_names)}
             ccd_to_valid_id_array = np.array(
                 [
                     float("nan") if i not in ccd_to_valid_ids else ccd_to_valid_ids[i]
@@ -751,9 +667,7 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
                     syms.append([sym_dict[i] for i in range(len(ccd_valid_ids))])
             for sym in syms:
                 if len(sym) != added_molecules[mol_id]:
-                    raise Exception(
-                        f"Symmetry length mismatch {len(sym)} {added_molecules[mol_id]}"
-                    )
+                    raise Exception(f"Symmetry length mismatch {len(sym)} {added_molecules[mol_id]}")  # noqa: TRY002
                 # assert (
                 #     len(sym) == added_molecules[mol_id]
                 # ), f"Symmetry length mismatch {len(sym)} {added_molecules[mol_id]}"
@@ -768,12 +682,10 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
                 molecule_symmetries.append(swaps)
 
             if return_physical_metrics:
-                edge_index, (lower_bounds, upper_bounds, bond_mask, angle_mask) = (
-                    slice_valid_index(
-                        edge_index,
-                        ccd_to_valid_id_array,
-                        (lower_bounds, upper_bounds, bond_mask, angle_mask),
-                    )
+                edge_index, (lower_bounds, upper_bounds, bond_mask, angle_mask) = slice_valid_index(
+                    edge_index,
+                    ccd_to_valid_id_array,
+                    (lower_bounds, upper_bounds, bond_mask, angle_mask),
                 )
                 all_edge_index.append(edge_index + start_mol)
                 all_lower_bounds.append(lower_bounds)
@@ -781,42 +693,30 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
                 all_bond_mask.append(bond_mask)
                 all_angle_mask.append(angle_mask)
 
-                chiral_atom_index, (chiral_check_mask, chiral_atom_orientations) = (
-                    slice_valid_index(
-                        chiral_atom_index,
-                        ccd_to_valid_id_array,
-                        (chiral_check_mask, chiral_atom_orientations),
-                    )
+                chiral_atom_index, (chiral_check_mask, chiral_atom_orientations) = slice_valid_index(
+                    chiral_atom_index,
+                    ccd_to_valid_id_array,
+                    (chiral_check_mask, chiral_atom_orientations),
                 )
                 all_chiral_atom_index.append(chiral_atom_index + start_mol)
                 all_chiral_check_mask.append(chiral_check_mask)
                 all_chiral_atom_orientations.append(chiral_atom_orientations)
 
-                stereo_bond_index, (stereo_check_mask, stereo_bond_orientations) = (
-                    slice_valid_index(
-                        stereo_bond_index,
-                        ccd_to_valid_id_array,
-                        (stereo_check_mask, stereo_bond_orientations),
-                    )
+                stereo_bond_index, (stereo_check_mask, stereo_bond_orientations) = slice_valid_index(
+                    stereo_bond_index,
+                    ccd_to_valid_id_array,
+                    (stereo_check_mask, stereo_bond_orientations),
                 )
                 all_stereo_bond_index.append(stereo_bond_index + start_mol)
                 all_stereo_check_mask.append(stereo_check_mask)
                 all_stereo_bond_orientations.append(stereo_bond_orientations)
 
-                aromatic_5_ring_index = slice_valid_index(
-                    aromatic_5_ring_index, ccd_to_valid_id_array
-                )
-                aromatic_6_ring_index = slice_valid_index(
-                    aromatic_6_ring_index, ccd_to_valid_id_array
-                )
-                planar_double_bond_index = slice_valid_index(
-                    planar_double_bond_index, ccd_to_valid_id_array
-                )
+                aromatic_5_ring_index = slice_valid_index(aromatic_5_ring_index, ccd_to_valid_id_array)
+                aromatic_6_ring_index = slice_valid_index(aromatic_6_ring_index, ccd_to_valid_id_array)
+                planar_double_bond_index = slice_valid_index(planar_double_bond_index, ccd_to_valid_id_array)
                 all_aromatic_5_ring_index.append(aromatic_5_ring_index + start_mol)
                 all_aromatic_6_ring_index.append(aromatic_6_ring_index + start_mol)
-                all_planar_double_bond_index.append(
-                    planar_double_bond_index + start_mol
-                )
+                all_planar_double_bond_index.append(planar_double_bond_index + start_mol)
 
     if return_physical_metrics:
         if len(all_edge_index) > 0:
@@ -828,25 +728,17 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
 
             all_chiral_atom_index = np.concatenate(all_chiral_atom_index, axis=1)
             all_chiral_check_mask = np.concatenate(all_chiral_check_mask, axis=0)
-            all_chiral_atom_orientations = np.concatenate(
-                all_chiral_atom_orientations, axis=0
-            )
+            all_chiral_atom_orientations = np.concatenate(all_chiral_atom_orientations, axis=0)
 
             all_stereo_bond_index = np.concatenate(all_stereo_bond_index, axis=1)
             all_stereo_check_mask = np.concatenate(all_stereo_check_mask, axis=0)
-            all_stereo_bond_orientations = np.concatenate(
-                all_stereo_bond_orientations, axis=0
-            )
+            all_stereo_bond_orientations = np.concatenate(all_stereo_bond_orientations, axis=0)
 
-            all_aromatic_5_ring_index = np.concatenate(
-                all_aromatic_5_ring_index, axis=1
-            )
-            all_aromatic_6_ring_index = np.concatenate(
-                all_aromatic_6_ring_index, axis=1
-            )
+            all_aromatic_5_ring_index = np.concatenate(all_aromatic_5_ring_index, axis=1)
+            all_aromatic_6_ring_index = np.concatenate(all_aromatic_6_ring_index, axis=1)
             all_planar_double_bond_index = np.empty(
                 (6, 0), dtype=np.int64
-            )  # TODO remove np.concatenate(all_planar_double_bond_index, axis=1)
+            )  # TODO (jwohlwend): remove np.concatenate(all_planar_double_bond_index, axis=1)
         else:
             all_edge_index = np.empty((2, 0), dtype=np.int64)
             all_lower_bounds = np.array([], dtype=np.float32)
@@ -875,23 +767,13 @@ def get_ligand_symmetries(cropped, symmetries, return_physical_metrics=False):
             "ligand_edge_angle_mask": torch.tensor(all_angle_mask),
             "ligand_chiral_atom_index": torch.tensor(all_chiral_atom_index).long(),
             "ligand_chiral_check_mask": torch.tensor(all_chiral_check_mask),
-            "ligand_chiral_atom_orientations": torch.tensor(
-                all_chiral_atom_orientations
-            ),
+            "ligand_chiral_atom_orientations": torch.tensor(all_chiral_atom_orientations),
             "ligand_stereo_bond_index": torch.tensor(all_stereo_bond_index).long(),
             "ligand_stereo_check_mask": torch.tensor(all_stereo_check_mask),
-            "ligand_stereo_bond_orientations": torch.tensor(
-                all_stereo_bond_orientations
-            ),
-            "ligand_aromatic_5_ring_index": torch.tensor(
-                all_aromatic_5_ring_index
-            ).long(),
-            "ligand_aromatic_6_ring_index": torch.tensor(
-                all_aromatic_6_ring_index
-            ).long(),
-            "ligand_planar_double_bond_index": torch.tensor(
-                all_planar_double_bond_index
-            ).long(),
+            "ligand_stereo_bond_orientations": torch.tensor(all_stereo_bond_orientations),
+            "ligand_aromatic_5_ring_index": torch.tensor(all_aromatic_5_ring_index).long(),
+            "ligand_aromatic_6_ring_index": torch.tensor(all_aromatic_6_ring_index).long(),
+            "ligand_planar_double_bond_index": torch.tensor(all_planar_double_bond_index).long(),
         }
     else:
         features = {

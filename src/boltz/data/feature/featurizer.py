@@ -2,11 +2,9 @@ import math
 import random
 from typing import Optional
 
-import numba
 import numpy as np
-import numpy.typing as npt
 import torch
-from numba import types
+from jaxtyping import Bool, Float, Float32, Int64
 from torch import Tensor, from_numpy
 from torch.nn.functional import one_hot
 
@@ -19,12 +17,11 @@ from boltz.data.feature.symmetry import (
 from boltz.data.pad import pad_dim
 from boltz.data.types import (
     MSA,
-    MSADeletion,
-    MSAResidue,
-    MSASequence,
     Tokenized,
 )
 from boltz.model.modules.utils import center_random_augmentation
+
+from .util import compute_collinear_mask, dummy_msa, prepare_msa_arrays
 
 ####################################################################################################
 # HELPERS
@@ -50,7 +47,7 @@ def compute_frames_nonpolymer(
     resolved_frame_data : list
         The resolved frame data.
 
-    Returns
+    Returns:
     -------
     tuple[list, list]
         The frame data and resolved frame data.
@@ -62,29 +59,22 @@ def compute_frames_nonpolymer(
     asym_id_atom = data.tokens["asym_id"][atom_to_token]
     token_idx = 0
     atom_idx = 0
-    for id in np.unique(data.tokens["asym_id"]):
-        mask_chain_token = asym_id_token == id
-        mask_chain_atom = asym_id_atom == id
+    for asym_id in np.unique(data.tokens["asym_id"]):
+        mask_chain_token = asym_id_token == asym_id
+        mask_chain_atom = asym_id_atom == asym_id
         num_tokens = mask_chain_token.sum()
         num_atoms = mask_chain_atom.sum()
-        if (
-            data.tokens[token_idx]["mol_type"] != const.chain_type_ids["NONPOLYMER"]
-            or num_atoms < 3
-        ):
+        if data.tokens[token_idx]["mol_type"] != const.chain_type_ids["NONPOLYMER"] or num_atoms < 3:
             token_idx += num_tokens
             atom_idx += num_atoms
             continue
         dist_mat = (
-            (
-                coords.reshape(-1, 3)[mask_chain_atom][:, None, :]
-                - coords.reshape(-1, 3)[mask_chain_atom][None, :, :]
-            )
+            (coords.reshape(-1, 3)[mask_chain_atom][:, None, :] - coords.reshape(-1, 3)[mask_chain_atom][None, :, :])
             ** 2
         ).sum(-1) ** 0.5
-        resolved_pair = 1 - (
-            resolved_mask[mask_chain_atom][None, :]
-            * resolved_mask[mask_chain_atom][:, None]
-        ).astype(np.float32)
+        resolved_pair = 1 - (resolved_mask[mask_chain_atom][None, :] * resolved_mask[mask_chain_atom][:, None]).astype(
+            np.float32
+        )
         resolved_pair[resolved_pair == 1] = math.inf
         indices = np.argsort(dist_mat + resolved_pair, axis=1)
         frames = (
@@ -99,9 +89,7 @@ def compute_frames_nonpolymer(
             + atom_idx
         )
         frame_data[token_idx : token_idx + num_atoms, :] = frames
-        resolved_frame_data[token_idx : token_idx + num_atoms] = resolved_mask[
-            frames
-        ].all(axis=1)
+        resolved_frame_data[token_idx : token_idx + num_atoms] = resolved_mask[frames].all(axis=1)
         token_idx += num_tokens
         atom_idx += num_atoms
     frames_expanded = coords.reshape(-1, 3)[frame_data]
@@ -113,63 +101,36 @@ def compute_frames_nonpolymer(
     return frame_data, resolved_frame_data & mask_collinear
 
 
-def compute_collinear_mask(v1, v2):
-    norm1 = np.linalg.norm(v1, axis=1, keepdims=True)
-    norm2 = np.linalg.norm(v2, axis=1, keepdims=True)
-    v1 = v1 / (norm1 + 1e-6)
-    v2 = v2 / (norm2 + 1e-6)
-    mask_angle = np.abs(np.sum(v1 * v2, axis=1)) < 0.9063
-    mask_overlap1 = norm1.reshape(-1) > 1e-2
-    mask_overlap2 = norm2.reshape(-1) > 1e-2
-    return mask_angle & mask_overlap1 & mask_overlap2
-
-
-def dummy_msa(residues: np.ndarray) -> MSA:
-    """Create a dummy MSA for a chain.
-
-    Parameters
-    ----------
-    residues : np.ndarray
-        The residues for the chain.
-
-    Returns
-    -------
-    MSA
-        The dummy MSA.
-
-    """
-    residues = [res["res_type"] for res in residues]
-    deletions = []
-    sequences = [(0, -1, 0, len(residues), 0, 0)]
-    return MSA(
-        residues=np.array(residues, dtype=MSAResidue),
-        deletions=np.array(deletions, dtype=MSADeletion),
-        sequences=np.array(sequences, dtype=MSASequence),
-    )
-
-
-def construct_paired_msa(  # noqa: C901, PLR0915, PLR0912
+def construct_paired_msa(
     data: Tokenized,
     max_seqs: int,
     max_pairs: int = 8192,
     max_total: int = 16384,
     random_subset: bool = False,
-) -> tuple[Tensor, Tensor, Tensor]:
-    """Pair the MSA data.
+) -> tuple[Int64[Tensor, "n_tokens n_pairs"], Float[Tensor, "n_tokens n_pairs"], Float[Tensor, "n_tokens n_pairs"]]:
+    """Pair the MSA data using the following logic:
+    Start with the primary sequence for each chain(index 0), marking them as paired.
+    Add up to max_pairs more paired rows (based on shared taxonomies across chains).
+    Then, add enough unpaired rows to reach max_total (or exhaust all available unpaired sequences).
+    Finally, downsample (or truncate) this combined list to max_seqs (either randomly or deterministically).
 
-    Parameters
-    ----------
-    data : Input
-        The input data.
+    Args:
+        data : the input data containing tokenized MSA and structure information.
+        max_seqs: the final target size for the number of sequences in the combined MSA, after all the paring and
+            filling logic. If `random_subset` is True, the generated sequences are randomly down-sampled,
+            otherwise the first `max_seqs` sequences are used.
+        max_pairs: intermediate upper bound on the number of "paired" MSA rows that the function
+            attempts to construct
+        max_total: intermediate upper bound on the total number of rows (paired + unpaired) that the function
+            will collect before the final down-sampling to `max_seqs`
+        random_subset: whether to randomly sample the sequences after pairing, or to take the first `max_seqs` sequences.
 
-    Returns
-    -------
-    Tensor
-        The MSA data.
-    Tensor
-        The deletion data.
-    Tensor
-        Mask indicating paired sequences.
+
+    Returns:
+        A tuple containing:
+            The MSA data.
+            The deletion data.
+            Mask indicating paired sequences.
 
     """
     # Get unique chains (ensuring monotonicity in the order)
@@ -177,7 +138,7 @@ def construct_paired_msa(  # noqa: C901, PLR0915, PLR0912
     chain_ids = np.unique(data.tokens["asym_id"])
 
     # Get relevant MSA, and create a dummy for chains without
-    msa = {k: data.msa[k] for k in chain_ids if k in data.msa}
+    msa: dict[int, MSA] = {k: data.msa[k] for k in chain_ids if k in data.msa}
     for chain_id in chain_ids:
         if chain_id not in msa:
             chain = data.structure.chains[chain_id]
@@ -210,34 +171,32 @@ def construct_paired_msa(  # noqa: C901, PLR0915, PLR0912
     visited = {(c, s) for c, items in taxonomy_map for s in items}
     available = {}
     for c in chain_ids:
-        available[c] = [
-            i for i in range(1, len(msa[c].sequences)) if (c, i) not in visited
-        ]
+        available[c] = [i for i in range(1, len(msa[c].sequences)) if (c, i) not in visited]
 
     # Create sequence pairs
-    is_paired = []
-    pairing = []
+    is_paired: list[dict[int, int]] = []
+    pairing: list[dict[int, int]] = []
 
     # Start with the first sequence for each chain
-    is_paired.append({c: 1 for c in chain_ids})
-    pairing.append({c: 0 for c in chain_ids})
+    is_paired.append(dict.fromkeys(chain_ids, 1))
+    pairing.append(dict.fromkeys(chain_ids, 0))
 
     # Then add up to 8191 paired rows
     for _, pairs in taxonomy_map:
-        # Group occurences by chain_id in case we have multiple
+        # Group occurrences by chain_id in case we have multiple
         # sequences from the same chain and same taxonomy
-        chain_occurences = {}
+        chain_occurrences = {}
         for chain_id, seq_idx in pairs:
-            chain_occurences.setdefault(chain_id, []).append(seq_idx)
+            chain_occurrences.setdefault(chain_id, []).append(seq_idx)
 
-        # We create as many pairings as the maximum number of occurences
-        max_occurences = max(len(v) for v in chain_occurences.values())
-        for i in range(max_occurences):
+        # We create as many pairings as the maximum number of occurrences
+        max_occurrences = max(len(v) for v in chain_occurrences.values())
+        for i in range(max_occurrences):
             row_pairing = {}
             row_is_paired = {}
 
             # Add the chains present in the taxonomy
-            for chain_id, seq_idxs in chain_occurences.items():
+            for chain_id, seq_idxs in chain_occurrences.items():
                 # Roll over the sequence index to maximize diversity
                 idx = i % len(seq_idxs)
                 seq_idx = seq_idxs[idx]
@@ -296,9 +255,7 @@ def construct_paired_msa(  # noqa: C901, PLR0915, PLR0912
     if random_subset:
         num_seqs = len(pairing)
         if num_seqs > max_seqs:
-            indices = np.random.choice(
-                list(range(1, num_seqs)), size=max_seqs - 1, replace=False
-            )  # noqa: NPY002
+            indices = np.random.choice(list(range(1, num_seqs)), size=max_seqs - 1, replace=False)
             pairing = [pairing[0]] + [pairing[i] for i in indices]
             is_paired = [is_paired[0]] + [is_paired[i] for i in indices]
     else:
@@ -306,162 +263,20 @@ def construct_paired_msa(  # noqa: C901, PLR0915, PLR0912
         pairing = pairing[:max_seqs]
         is_paired = is_paired[:max_seqs]
 
-    # Map (chain_id, seq_idx, res_idx) to deletion
-    deletions = {}
+    # Map (chain_id, seq_idx, res_idx) to no of deletions
+    deletions: dict[tuple[int, int, int], int] = {}
     for chain_id, chain_msa in msa.items():
-        chain_deletions = chain_msa.deletions
         for sequence in chain_msa.sequences:
             del_start = sequence["del_start"]
             del_end = sequence["del_end"]
             chain_deletions = chain_msa.deletions[del_start:del_end]
             for deletion_data in chain_deletions:
                 seq_idx = sequence["seq_idx"]
-                res_idx = deletion_data["res_idx"]
-                deletion = deletion_data["deletion"]
-                deletions[(chain_id, seq_idx, res_idx)] = deletion
+                res_idx = deletion_data["res_idx"]  # first residue in the deletion
+                deletion = deletion_data["deletion"]  # no of residues being deleted
+                deletions[chain_id, seq_idx, res_idx] = deletion
 
-    # Add all the token MSA data
-    msa_data, del_data, paired_data = prepare_msa_arrays(
-        data.tokens, pairing, is_paired, deletions, msa
-    )
-
-    msa_data = torch.tensor(msa_data, dtype=torch.long)
-    del_data = torch.tensor(del_data, dtype=torch.float)
-    paired_data = torch.tensor(paired_data, dtype=torch.float)
-
-    return msa_data, del_data, paired_data
-
-
-def prepare_msa_arrays(
-    tokens,
-    pairing: list[dict[int, int]],
-    is_paired: list[dict[int, int]],
-    deletions: dict[tuple[int, int, int], int],
-    msa: dict[int, MSA],
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Reshape data to play nicely with numba jit."""
-    token_asym_ids_arr = np.array([t["asym_id"] for t in tokens], dtype=np.int64)
-    token_res_idxs_arr = np.array([t["res_idx"] for t in tokens], dtype=np.int64)
-
-    chain_ids = sorted(msa.keys())
-
-    # chain_ids are not necessarily contiguous (e.g. they might be 0, 24, 25).
-    # This allows us to look up a chain_id by it's index in the chain_ids list.
-    chain_id_to_idx = {chain_id: i for i, chain_id in enumerate(chain_ids)}
-    token_asym_ids_idx_arr = np.array(
-        [chain_id_to_idx[asym_id] for asym_id in token_asym_ids_arr], dtype=np.int64
-    )
-
-    pairing_arr = np.zeros((len(pairing), len(chain_ids)), dtype=np.int64)
-    is_paired_arr = np.zeros((len(is_paired), len(chain_ids)), dtype=np.int64)
-
-    for i, row_pairing in enumerate(pairing):
-        for chain_id in chain_ids:
-            pairing_arr[i, chain_id_to_idx[chain_id]] = row_pairing[chain_id]
-
-    for i, row_is_paired in enumerate(is_paired):
-        for chain_id in chain_ids:
-            is_paired_arr[i, chain_id_to_idx[chain_id]] = row_is_paired[chain_id]
-
-    max_seq_len = max(len(msa[chain_id].sequences) for chain_id in chain_ids)
-
-    # we want res_start from sequences
-    msa_sequences = np.full((len(chain_ids), max_seq_len), -1, dtype=np.int64)
-    for chain_id in chain_ids:
-        for i, seq in enumerate(msa[chain_id].sequences):
-            msa_sequences[chain_id_to_idx[chain_id], i] = seq["res_start"]
-
-    max_residues_len = max(len(msa[chain_id].residues) for chain_id in chain_ids)
-    msa_residues = np.full((len(chain_ids), max_residues_len), -1, dtype=np.int64)
-    for chain_id in chain_ids:
-        residues = msa[chain_id].residues.astype(np.int64)
-        idxs = np.arange(len(residues))
-        chain_idx = chain_id_to_idx[chain_id]
-        msa_residues[chain_idx, idxs] = residues
-
-    deletions_dict = numba.typed.Dict.empty(
-        key_type=numba.types.Tuple(
-            [numba.types.int64, numba.types.int64, numba.types.int64]
-        ),
-        value_type=numba.types.int64,
-    )
-    deletions_dict.update(deletions)
-
-    return _prepare_msa_arrays_inner(
-        token_asym_ids_arr,
-        token_res_idxs_arr,
-        token_asym_ids_idx_arr,
-        pairing_arr,
-        is_paired_arr,
-        deletions_dict,
-        msa_sequences,
-        msa_residues,
-        const.token_ids["-"],
-    )
-
-
-deletions_dict_type = types.DictType(types.UniTuple(types.int64, 3), types.int64)
-
-
-@numba.njit(
-    [
-        types.Tuple(
-            (
-                types.int64[:, ::1],  # msa_data
-                types.int64[:, ::1],  # del_data
-                types.int64[:, ::1],  # paired_data
-            )
-        )(
-            types.int64[::1],  # token_asym_ids
-            types.int64[::1],  # token_res_idxs
-            types.int64[::1],  # token_asym_ids_idx
-            types.int64[:, ::1],  # pairing
-            types.int64[:, ::1],  # is_paired
-            deletions_dict_type,  # deletions
-            types.int64[:, ::1],  # msa_sequences
-            types.int64[:, ::1],  # msa_residues
-            types.int64,  # gap_token
-        )
-    ],
-    cache=True,
-)
-def _prepare_msa_arrays_inner(
-    token_asym_ids: npt.NDArray[np.int64],
-    token_res_idxs: npt.NDArray[np.int64],
-    token_asym_ids_idx: npt.NDArray[np.int64],
-    pairing: npt.NDArray[np.int64],
-    is_paired: npt.NDArray[np.int64],
-    deletions: dict[tuple[int, int, int], int],
-    msa_sequences: npt.NDArray[np.int64],
-    msa_residues: npt.NDArray[np.int64],
-    gap_token: int,
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    n_tokens = len(token_asym_ids)
-    n_pairs = len(pairing)
-    msa_data = np.full((n_tokens, n_pairs), gap_token, dtype=np.int64)
-    paired_data = np.zeros((n_tokens, n_pairs), dtype=np.int64)
-    del_data = np.zeros((n_tokens, n_pairs), dtype=np.int64)
-
-    # Add all the token MSA data
-    for token_idx in range(n_tokens):
-        chain_id_idx = token_asym_ids_idx[token_idx]
-        chain_id = token_asym_ids[token_idx]
-        res_idx = token_res_idxs[token_idx]
-
-        for pair_idx in range(n_pairs):
-            seq_idx = pairing[pair_idx, chain_id_idx]
-            paired_data[token_idx, pair_idx] = is_paired[pair_idx, chain_id_idx]
-
-            # Add residue type
-            if seq_idx != -1:
-                res_start = msa_sequences[chain_id_idx, seq_idx]
-                res_type = msa_residues[chain_id_idx, res_start + res_idx]
-                k = (chain_id, seq_idx, res_idx)
-                if k in deletions:
-                    del_data[token_idx, pair_idx] = deletions[k]
-                msa_data[token_idx, pair_idx] = res_type
-
-    return msa_data, del_data, paired_data
+    return prepare_msa_arrays(data.tokens, pairing, is_paired, deletions, msa)
 
 
 ####################################################################################################
@@ -495,20 +310,42 @@ def process_token_features(
     inference_binder: Optional[list[int]] = None,
     inference_pocket: Optional[list[tuple[int, int]]] = None,
 ) -> dict[str, Tensor]:
-    """Get the token features.
+    """Gets the token features.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_tokens : int
-        The maximum number of tokens.
+    Args:
+        data: The tokenized data, containing information about tokens (residues/atoms), their types,
+            indices, and structural context.
+        max_tokens: The maximum number of tokens to pad or truncate to. If None, the original number
+            of tokens is used. Defaults to None.
+        binder_pocket_conditioned_prop: The probability (between 0.0 and 1.0) of enabling binder/pocket
+            conditioning during training. Defaults to 0.0 (no conditioning).
+        binder_pocket_cutoff: The distance cutoff in Angstroms to define residues within a 'pocket'
+            around a chosen binder. Defaults to 6.0.
+        binder_pocket_sampling_geometric_p: The probability parameter 'p' for a geometric distribution
+            used to subsample pocket residues when conditioning is active. Defaults to 0.0.
+        only_ligand_binder_pocket: If true and binder/pocket conditioning is active, only non-polymer
+            (ligand) chains are considered as potential binders. Defaults to False.
+        inference_binder: During inference, a list of asym_ids specifying which chains are designated as
+            the binder. Defaults to None.
+        inference_pocket: During inference, a list of (asym_id, res_idx) tuples explicitly defining which
+            residues constitute the pocket. Defaults to None.
 
-    Returns
-    -------
-    dict[str, Tensor]
-        The token features.
-
+    Returns:
+        A dictionary containing various token-level features:
+        - token_index: Sequential index for each token.
+        - residue_index: Residue index within its chain.
+        - asym_id: the chain each token belongs to.
+        - entity_id:  the entity (id of unique chains) each token belongs to.
+        - sym_id: the sym_id (id within identical chains) for each token.
+        - mol_type: molecular type (e.g., protein, DNA, non-polymer) for each token.
+        - res_type: one-hot encoded residue type for each token.
+        - disto_center: 3D coordinates of the representative atom for distogram calculation.
+        - token_bonds: Binary matrix indicating direct bonds between tokens.
+        - token_pad_mask: Mask indicating padded tokens.
+        - token_resolved_mask: Mask indicating resolved (non-missing) tokens.
+        - token_disto_mask: Mask for distogram calculation validity.
+        - pocket_feature: One-hot encoded feature indicating binder, pocket, or unselected residues.
+        - cyclic_period: The length of the cyclic component the token belongs to (0 if linear).
     """
     # Token data
     token_data = data.tokens
@@ -549,9 +386,7 @@ def process_token_features(
     bonds = bonds.unsqueeze(-1)
 
     # Pocket conditioned feature
-    pocket_feature = (
-        np.zeros(len(token_data)) + const.pocket_contact_info["UNSPECIFIED"]
-    )
+    pocket_feature = np.zeros(len(token_data)) + const.pocket_contact_info["UNSPECIFIED"]
     if inference_binder is not None:
         assert inference_pocket is not None
         pocket_residues = set(inference_pocket)
@@ -562,16 +397,9 @@ def process_token_features(
                 pocket_feature[idx] = const.pocket_contact_info["POCKET"]
             else:
                 pocket_feature[idx] = const.pocket_contact_info["UNSELECTED"]
-    elif (
-        binder_pocket_conditioned_prop > 0.0
-        and random.random() < binder_pocket_conditioned_prop
-    ):
+    elif binder_pocket_conditioned_prop > 0.0 and random.random() < binder_pocket_conditioned_prop:
         # choose as binder a random ligand in the crop, if there are no ligands select a protein chain
-        binder_asym_ids = np.unique(
-            token_data["asym_id"][
-                token_data["mol_type"] == const.chain_type_ids["NONPOLYMER"]
-            ]
-        )
+        binder_asym_ids = np.unique(token_data["asym_id"][token_data["mol_type"] == const.chain_type_ids["NONPOLYMER"]])
 
         if len(binder_asym_ids) == 0:
             if not only_ligand_binder_pocket:
@@ -585,9 +413,7 @@ def process_token_features(
             for token in token_data:
                 if token["asym_id"] == pocket_asym_id:
                     binder_coords.append(
-                        data.structure.atoms["coords"][
-                            token["atom_idx"] : token["atom_idx"] + token["atom_num"]
-                        ]
+                        data.structure.atoms["coords"][token["atom_idx"] : token["atom_idx"] + token["atom_num"]]
                     )
             binder_coords = np.concatenate(binder_coords, axis=0)
 
@@ -618,17 +444,13 @@ def process_token_features(
             pocket_mask = token_dist < binder_pocket_cutoff
 
             if np.sum(pocket_mask) > 0:
-                pocket_feature = (
-                    np.zeros(len(token_data)) + const.pocket_contact_info["UNSELECTED"]
-                )
+                pocket_feature = np.zeros(len(token_data)) + const.pocket_contact_info["UNSELECTED"]
                 pocket_feature[binder_mask] = const.pocket_contact_info["BINDER"]
 
                 if binder_pocket_sampling_geometric_p > 0.0:
                     # select a subset of the pocket, according
                     # to a geometric distribution with one as minimum
-                    pocket_mask = select_subset_from_mask(
-                        pocket_mask, binder_pocket_sampling_geometric_p
-                    )
+                    pocket_mask = select_subset_from_mask(pocket_mask, binder_pocket_sampling_geometric_p)
 
                 pocket_feature[pocket_mask] = const.pocket_contact_info["POCKET"]
     pocket_feature = from_numpy(pocket_feature).long()
@@ -679,20 +501,43 @@ def process_atom_features(
     max_atoms: Optional[int] = None,
     max_tokens: Optional[int] = None,
 ) -> dict[str, Tensor]:
-    """Get the atom features.
+    """Gets the atom features.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_atoms : int, optional
-        The maximum number of atoms.
+    This function extracts and computes a rich set of atomic-level features,
+    including positions, types, charges, and spatial relationships (distogram),
+    for each atom in the molecule. It also handles padding and optional geometric transformations.
 
-    Returns
-    -------
-    dict[str, Tensor]
-        The atom features.
+    Args:
+        data: The tokenized data, containing atomic and token-level structural information.
+        atoms_per_window_queries: The desired number of atoms per window for queries, used primarily
+            for padding to a multiple of this value. Defaults to 32.
+        min_dist: The minimum distance in Angstroms for the distogram binning. Defaults to 2.0.
+        max_dist: The maximum distance in Angstroms for the distogram binning. Defaults to 22.0.
+        num_bins: The number of bins to use for discretizing distances in the distogram. Defaults to 64.
+        max_atoms: The maximum total number of atoms to pad or truncate to. If None, padding is applied to
+            the nearest multiple of `atoms_per_window_queries`. Defaults to None.
+        max_tokens: The maximum number of tokens. This is used for padding atom-to-token mapping features
+            if the token dimension exceeds this. Defaults to None.
 
+    Returns:
+        A dictionary containing various atom-level features:
+        - ref_pos (Float[Tensor, "len 3"]): Reference atom 3D coordinates, potentially roto-translated.
+        - atom_resolved_mask (Bool[Tensor, "atom_len"]): Mask indicating which atoms have resolved coordinates.
+        - ref_element (Int64[Tensor, "atom_len num_elements=128"]): One-hot encoded element type for each atom.
+        - ref_charge (Int8[Tensor, "atom_len"]): Charge for each atom.
+        - ref_atom_name_chars (Int64[Tensor, f"atom_len 4 {num_bins}"]): One-hot encoded atom name characters.
+        - ref_space_uid (Int64[Tensor, "atom_len"]): Unique ID for each atom's reference space (e.g., chain/residue).
+        - coords (Float[Tensor, "? atom_len 3"]): Ground truth coordinates for atoms, typically centered.
+        - atom_pad_mask (Float32[Tensor, "atom_len"]): Mask indicating padded atom positions.
+        - atom_to_token (Int64[Tensor, "atom_len "]): One-hot mapping from atom index to its corresponding token index.
+        - token_to_rep_atom (Int64[Tensor, "token_len atom_len"]): One-hot mapping from token index to its
+            representative atom's index.
+        - r_set_to_rep_atom (Int64[Tensor, "token_len atom_len"]): One-hot mapping from the residue set index to
+            its representative atom's index.
+        - disto_target (Int64[Tensor, f"token_len token_len {num_bins}"]): The one-hot encoded distogram
+            target for the model.
+        - frames_idx (Float32[Tensor, "token_len 3"]): Indices of atoms forming local reference frames.
+        - frame_resolved_mask (Bool[Tensor, "token_len"]): Mask indicating which local reference frames are resolved.
     """
     # Filter to tokens' atoms
     atom_data = []
@@ -714,9 +559,9 @@ def process_atom_features(
 
         if (chain_idx, res_id) not in chain_res_ids:
             new_idx = len(chain_res_ids)
-            chain_res_ids[(chain_idx, res_id)] = new_idx
+            chain_res_ids[chain_idx, res_id] = new_idx
         else:
-            new_idx = chain_res_ids[(chain_idx, res_id)]
+            new_idx = chain_res_ids[chain_idx, res_id]
 
         # Map atoms to token indices
         ref_space_uid.extend([new_idx] * token["atom_num"])
@@ -729,9 +574,7 @@ def process_atom_features(
 
         # Map token to representative atom
         token_to_rep_atom.append(atom_idx + token["disto_idx"] - start)
-        if (chain["mol_type"] != const.chain_type_ids["NONPOLYMER"]) and token[
-            "resolved_mask"
-        ]:
+        if (chain["mol_type"] != const.chain_type_ids["NONPOLYMER"]) and token["resolved_mask"]:
             r_set_to_rep_atom.append(atom_idx + token["center_idx"] - start)
 
         # Get token coordinates
@@ -741,12 +584,10 @@ def process_atom_features(
         # Get frame data
         res_type = const.tokens[token["res_type"]]
 
-        if token["atom_num"] < 3 or res_type in ["PAD", "UNK", "-"]:
+        if token["atom_num"] < 3 or res_type in {"PAD", "UNK", "-"}:
             idx_frame_a, idx_frame_b, idx_frame_c = 0, 0, 0
             mask_frame = False
-        elif (token["mol_type"] == const.chain_type_ids["PROTEIN"]) and (
-            res_type in const.ref_atoms
-        ):
+        elif (token["mol_type"] == const.chain_type_ids["PROTEIN"]) and (res_type in const.ref_atoms):
             idx_frame_a, idx_frame_b, idx_frame_c = (
                 const.ref_atoms[res_type].index("N"),
                 const.ref_atoms[res_type].index("CA"),
@@ -758,8 +599,7 @@ def process_atom_features(
                 and token_atoms["is_present"][idx_frame_c]
             )
         elif (
-            token["mol_type"] == const.chain_type_ids["DNA"]
-            or token["mol_type"] == const.chain_type_ids["RNA"]
+            token["mol_type"] == const.chain_type_ids["DNA"] or token["mol_type"] == const.chain_type_ids["RNA"]
         ) and (res_type in const.ref_atoms):
             idx_frame_a, idx_frame_b, idx_frame_c = (
                 const.ref_atoms[res_type].index("C1'"),
@@ -774,9 +614,7 @@ def process_atom_features(
         else:
             idx_frame_a, idx_frame_b, idx_frame_c = 0, 0, 0
             mask_frame = False
-        frame_data.append(
-            [idx_frame_a + atom_idx, idx_frame_b + atom_idx, idx_frame_c + atom_idx]
-        )
+        frame_data.append([idx_frame_a + atom_idx, idx_frame_b + atom_idx, idx_frame_c + atom_idx])
         resolved_frame_data.append(mask_frame)
 
         # Get distogram coordinates
@@ -807,9 +645,7 @@ def process_atom_features(
     ref_atom_name_chars = from_numpy(atom_data["name"]).long()
     ref_element = from_numpy(atom_data["element"]).long()
     ref_charge = from_numpy(atom_data["charge"])
-    ref_pos = from_numpy(
-        atom_data["conformer"].copy()
-    )  # not sure why I need to copy here..
+    ref_pos = from_numpy(atom_data["conformer"].copy())  # not sure why I need to copy here..
     ref_space_uid = from_numpy(ref_space_uid)
     coords = from_numpy(coord_data.copy())
     resolved_mask = from_numpy(atom_data["is_present"])
@@ -828,9 +664,7 @@ def process_atom_features(
     frames = from_numpy(frame_data.copy())
     frame_resolved_mask = from_numpy(resolved_frame_data.copy())
     # Convert to one-hot
-    ref_atom_name_chars = one_hot(
-        ref_atom_name_chars % num_bins, num_classes=num_bins
-    )  # added for lower case letters
+    ref_atom_name_chars = one_hot(ref_atom_name_chars % num_bins, num_classes=num_bins)  # added for lower case letters
     ref_element = one_hot(ref_element, num_classes=const.num_elements)
     atom_to_token = one_hot(atom_to_token, num_classes=token_id + 1)
     token_to_rep_atom = one_hot(token_to_rep_atom, num_classes=len(atom_data))
@@ -842,18 +676,14 @@ def process_atom_features(
     coords = coords - center[:, None]
 
     # Apply random roto-translation to the input atoms
-    ref_pos = center_random_augmentation(
-        ref_pos[None], resolved_mask[None], centering=False
-    )[0]
+    ref_pos = center_random_augmentation(ref_pos[None], resolved_mask[None], centering=False)[0]
 
     # Compute padding and apply
     if max_atoms is not None:
         assert max_atoms % atoms_per_window_queries == 0
         pad_len = max_atoms - len(atom_data)
     else:
-        pad_len = (
-            (len(atom_data) - 1) // atoms_per_window_queries + 1
-        ) * atoms_per_window_queries - len(atom_data)
+        pad_len = ((len(atom_data) - 1) // atoms_per_window_queries + 1) * atoms_per_window_queries - len(atom_data)
 
     if pad_len > 0:
         pad_mask = pad_dim(pad_mask, 0, pad_len)
@@ -903,24 +733,24 @@ def process_msa_features(
     max_tokens: Optional[int] = None,
     pad_to_max_seqs: bool = False,
 ) -> dict[str, Tensor]:
-    """Get the MSA features.
+    """Builds MSA features from the tokenized data.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_seqs : int
-        The maximum number of MSA sequences.
-    max_tokens : int
-        The maximum number of tokens.
-    pad_to_max_seqs : bool
-        Whether to pad to the maximum number of sequences.
+    Args:
+        data: The tokenized data.
+        max_seqs_batch: The maximum number of sequences per batch.
+        max_seqs: The maximum number of MSA sequences.
+        max_tokens: The maximum number of tokens.
+        pad_to_max_seqs: Whether to pad to the maximum number of sequences.
 
-    Returns
-    -------
-    dict[str, Tensor]
-        The MSA features.
-
+    Returns:
+        A dictionary containing the MSA features:
+        - msa (Int64[Tensor, "depth len num_tokens=33"]): The MSA sequences as one-hot encoded tensors.
+        - msa_paired (Float32[Tensor, "depth_paired len"]): The paired MSA sequences.
+        - deletion_value (Float32[Tensor, "depth len"]): The deletion values for each sequence.
+        - has_deletion (Bool[Tensor, "depth len"]): A mask indicating deleted positions in each MSA sequence
+        - deletion_mean (Float32[Tensor, "len"]): average number of deletions for each position in the MSA.
+        - profile: The token distribution profile for each position in the MSA (adds up to 1 for each position).
+        - msa_mask (Int64[Tensor, "depth len"]): A mask indicating valid positions in the MSA sequences.
     """
     # Created paired MSA
     msa, deletion, paired = construct_paired_msa(data, max_seqs_batch)
@@ -931,12 +761,13 @@ def process_msa_features(
     )  # (N_MSA, N_RES, N_AA)
 
     # Prepare features
-    msa = torch.nn.functional.one_hot(msa, num_classes=const.num_tokens)
-    msa_mask = torch.ones_like(msa[:, :, 0])
-    profile = msa.float().mean(dim=0)
-    has_deletion = deletion > 0
-    deletion = np.pi / 2 * np.arctan(deletion / 3)
-    deletion_mean = deletion.mean(axis=0)
+    msa: Int64[Tensor, f"depth len {const.num_tokens}"] = torch.nn.functional.one_hot(msa, num_classes=const.num_tokens)
+    msa_mask: Int64[Tensor, "depth len"] = torch.ones_like(msa[:, :, 0])
+    profile: Float32[Tensor, f"len {const.num_tokens}"] = msa.float().mean(dim=0)
+    has_deletion: Bool[Tensor, "depth len"] = deletion > 0
+    # bind the deletion values to [0, pi/2]
+    deletion: Float32[Tensor, "depth len"] = np.pi / 2 * np.arctan(deletion / 3)
+    deletion_mean: Float32[Tensor, " len"] = deletion.mean(axis=0)
 
     # Pad in the MSA dimension (dim=0)
     if pad_to_max_seqs:
@@ -971,9 +802,7 @@ def process_msa_features(
     }
 
 
-def process_symmetry_features(
-    cropped: Tokenized, symmetries: dict
-) -> dict[str, Tensor]:
+def process_symmetry_features(cropped: Tokenized, symmetries: dict) -> dict[str, Tensor]:
     """Get the symmetry features.
 
     Parameters
@@ -981,7 +810,7 @@ def process_symmetry_features(
     data : Tokenized
         The tokenized data.
 
-    Returns
+    Returns:
     -------
     dict[str, Tensor]
         The symmetry features.
@@ -1006,51 +835,23 @@ def process_residue_constraint_features(
         planar_ring_5_constraints = residue_constraints.planar_ring_5_constraints
         planar_ring_6_constraints = residue_constraints.planar_ring_6_constraints
 
-        rdkit_bounds_index = torch.tensor(
-            rdkit_bounds_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
-        rdkit_bounds_bond_mask = torch.tensor(
-            rdkit_bounds_constraints["is_bond"].copy(), dtype=torch.bool
-        )
-        rdkit_bounds_angle_mask = torch.tensor(
-            rdkit_bounds_constraints["is_angle"].copy(), dtype=torch.bool
-        )
-        rdkit_upper_bounds = torch.tensor(
-            rdkit_bounds_constraints["upper_bound"].copy(), dtype=torch.float
-        )
-        rdkit_lower_bounds = torch.tensor(
-            rdkit_bounds_constraints["lower_bound"].copy(), dtype=torch.float
-        )
+        rdkit_bounds_index = torch.tensor(rdkit_bounds_constraints["atom_idxs"].copy(), dtype=torch.long).T
+        rdkit_bounds_bond_mask = torch.tensor(rdkit_bounds_constraints["is_bond"].copy(), dtype=torch.bool)
+        rdkit_bounds_angle_mask = torch.tensor(rdkit_bounds_constraints["is_angle"].copy(), dtype=torch.bool)
+        rdkit_upper_bounds = torch.tensor(rdkit_bounds_constraints["upper_bound"].copy(), dtype=torch.float)
+        rdkit_lower_bounds = torch.tensor(rdkit_bounds_constraints["lower_bound"].copy(), dtype=torch.float)
 
-        chiral_atom_index = torch.tensor(
-            chiral_atom_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
-        chiral_reference_mask = torch.tensor(
-            chiral_atom_constraints["is_reference"].copy(), dtype=torch.bool
-        )
-        chiral_atom_orientations = torch.tensor(
-            chiral_atom_constraints["is_r"].copy(), dtype=torch.bool
-        )
+        chiral_atom_index = torch.tensor(chiral_atom_constraints["atom_idxs"].copy(), dtype=torch.long).T
+        chiral_reference_mask = torch.tensor(chiral_atom_constraints["is_reference"].copy(), dtype=torch.bool)
+        chiral_atom_orientations = torch.tensor(chiral_atom_constraints["is_r"].copy(), dtype=torch.bool)
 
-        stereo_bond_index = torch.tensor(
-            stereo_bond_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
-        stereo_reference_mask = torch.tensor(
-            stereo_bond_constraints["is_reference"].copy(), dtype=torch.bool
-        )
-        stereo_bond_orientations = torch.tensor(
-            stereo_bond_constraints["is_e"].copy(), dtype=torch.bool
-        )
+        stereo_bond_index = torch.tensor(stereo_bond_constraints["atom_idxs"].copy(), dtype=torch.long).T
+        stereo_reference_mask = torch.tensor(stereo_bond_constraints["is_reference"].copy(), dtype=torch.bool)
+        stereo_bond_orientations = torch.tensor(stereo_bond_constraints["is_e"].copy(), dtype=torch.bool)
 
-        planar_bond_index = torch.tensor(
-            planar_bond_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
-        planar_ring_5_index = torch.tensor(
-            planar_ring_5_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
-        planar_ring_6_index = torch.tensor(
-            planar_ring_6_constraints["atom_idxs"].copy(), dtype=torch.long
-        ).T
+        planar_bond_index = torch.tensor(planar_bond_constraints["atom_idxs"].copy(), dtype=torch.long).T
+        planar_ring_5_index = torch.tensor(planar_ring_5_constraints["atom_idxs"].copy(), dtype=torch.long).T
+        planar_ring_6_index = torch.tensor(planar_ring_6_constraints["atom_idxs"].copy(), dtype=torch.long).T
     else:
         rdkit_bounds_index = torch.empty((2, 0), dtype=torch.long)
         rdkit_bounds_bond_mask = torch.empty((0,), dtype=torch.bool)
@@ -1127,8 +928,8 @@ def process_chain_feature_constraints(
 class BoltzFeaturizer:
     """Boltz featurizer."""
 
+    @staticmethod
     def process(
-        self,
         data: Tokenized,
         training: bool,
         max_seqs: int = 4096,
@@ -1151,28 +952,42 @@ class BoltzFeaturizer:
     ) -> dict[str, Tensor]:
         """Compute features.
 
-        Parameters
-        ----------
-        data : Tokenized
-            The tokenized data.
-        training : bool
-            Whether the model is in training mode.
-        max_tokens : int, optional
-            The maximum number of tokens.
-        max_atoms : int, optional
-            The maximum number of atoms
-        max_seqs : int, optional
-            The maximum number of sequences.
+        Args:
+            data: The tokenized data.
+            training: Whether the model is in training mode.
+            max_seqs: The maximum number of sequences.
+            atoms_per_window_queries: The number of atoms per window to use for queries in atom-level
+                feature processing. Defaults to 32.
+            min_dist: The minimum distance (in Angstroms) for distogram binning. Defaults to 2.0.
+            max_dist: The maximum distance (in Angstroms) for distogram binning. Defaults to 22.0.
+            num_bins: The number of bins to use for the distogram. Defaults to 64.
+            max_tokens: The maximum number of tokens to pad or truncate to. Defaults to None, meaning no fixed maximum.
+            max_atoms: The maximum number of atoms to pad or truncate to. Defaults to None, meaning no fixed maximum.
+            pad_to_max_seqs: A boolean indicating whether to pad the MSA sequences to `max_seqs`. Defaults to False.
+            compute_symmetries: A boolean indicating whether to compute and include symmetry-related features.
+                Defaults to False.
+            symmetries: A dictionary containing symmetry information, used if `compute_symmetries` is True. Defaults to None.
+            binder_pocket_conditioned_prop: The probability of conditioning on a binder pocket during training.
+                Defaults to 0.0 (no conditioning).
+            binder_pocket_cutoff: The distance cutoff (in Angstroms) for defining pocket residues around a
+                chosen binder. Defaults to 6.0.
+            binder_pocket_sampling_geometric_p: The probability `p` for geometric sampling of pocket residues,
+                used if `binder_pocket_conditioned_prop` is active. Defaults to 0.0.
+            only_ligand_binder_pocket: A boolean indicating whether to only consider ligand chains when selecting
+                a binder for pocket conditioning. Defaults to False.
+            inference_binder: An optional integer representing the asym_id of a specific binder chain
+                to condition on during inference. Defaults to None.
+            inference_pocket: An optional list of (asym_id, res_idx) tuples defining specific pocket
+                residues to condition on during inference. Defaults to None.
+            compute_constraint_features: A boolean indicating whether to compute and include residue and chain
+                constraint features. Defaults to False.
 
-        Returns
-        -------
-        dict[str, Tensor]
-            The features for model training.
-
+        Returns:
+            The features for model training, provided as a dictionary of tensors.
         """
         # Compute random number of sequences
         if training and max_seqs is not None:
-            max_seqs_batch = np.random.randint(1, max_seqs + 1)  # noqa: NPY002
+            max_seqs_batch = np.random.randint(1, max_seqs + 1)
         else:
             max_seqs_batch = max_seqs
 

@@ -19,8 +19,8 @@ class BoltzWriter(BasePredictionWriter):
 
     def __init__(
         self,
-        data_dir: str,
-        output_dir: str,
+        data_dir: Path,
+        output_dir: Path,
         output_format: Literal["pdb", "mmcif"] = "mmcif",
         boltz2: bool = False,
     ) -> None:
@@ -33,12 +33,12 @@ class BoltzWriter(BasePredictionWriter):
 
         """
         super().__init__(write_interval="batch")
-        if output_format not in ["pdb", "mmcif"]:
+        if output_format not in {"pdb", "mmcif"}:
             msg = f"Invalid output format: {output_format}"
             raise ValueError(msg)
 
         self.data_dir = Path(data_dir)
-        self.output_dir = Path(output_dir)
+        self.output_dir = output_dir
         self.output_format = output_format
         self.failed = 0
         self.boltz2 = boltz2
@@ -160,15 +160,11 @@ class BoltzWriter(BasePredictionWriter):
                 if self.output_format == "pdb":
                     path = struct_dir / f"{outname}.pdb"
                     with path.open("w") as f:
-                        f.write(
-                            to_pdb(new_structure, plddts=plddts, boltz2=self.boltz2)
-                        )
+                        f.write(to_pdb(new_structure, plddts=plddts, boltz2=self.boltz2))
                 elif self.output_format == "mmcif":
                     path = struct_dir / f"{outname}.cif"
                     with path.open("w") as f:
-                        f.write(
-                            to_mmcif(new_structure, plddts=plddts, boltz2=self.boltz2)
-                        )
+                        f.write(to_mmcif(new_structure, plddts=plddts, boltz2=self.boltz2))
                 else:
                     path = struct_dir / f"{outname}.npz"
                     np.savez_compressed(path, **asdict(new_structure))
@@ -180,10 +176,7 @@ class BoltzWriter(BasePredictionWriter):
 
                 # Save confidence summary
                 if "plddt" in prediction:
-                    path = (
-                        struct_dir
-                        / f"confidence_{record.id}_model_{idx_to_rank[model_idx]}.json"
-                    )
+                    path = struct_dir / f"confidence_{record.id}_model_{idx_to_rank[model_idx]}.json"
                     confidence_summary_dict = {}
                     for key in [
                         "confidence_score",
@@ -203,9 +196,7 @@ class BoltzWriter(BasePredictionWriter):
                     }
                     confidence_summary_dict["pair_chains_iptm"] = {
                         idx1: {
-                            idx2: prediction["pair_chains_iptm"][idx1][idx2][
-                                model_idx
-                            ].item()
+                            idx2: prediction["pair_chains_iptm"][idx1][idx2][model_idx].item()
                             for idx2 in prediction["pair_chains_iptm"][idx1]
                         }
                         for idx1 in prediction["pair_chains_iptm"]
@@ -220,28 +211,19 @@ class BoltzWriter(BasePredictionWriter):
 
                     # Save plddt
                     plddt = prediction["plddt"][model_idx]
-                    path = (
-                        struct_dir
-                        / f"plddt_{record.id}_model_{idx_to_rank[model_idx]}.npz"
-                    )
+                    path = struct_dir / f"plddt_{record.id}_model_{idx_to_rank[model_idx]}.npz"
                     np.savez_compressed(path, plddt=plddt.cpu().numpy())
 
                 # Save pae
                 if "pae" in prediction:
                     pae = prediction["pae"][model_idx]
-                    path = (
-                        struct_dir
-                        / f"pae_{record.id}_model_{idx_to_rank[model_idx]}.npz"
-                    )
+                    path = struct_dir / f"pae_{record.id}_model_{idx_to_rank[model_idx]}.npz"
                     np.savez_compressed(path, pae=pae.cpu().numpy())
 
                 # Save pde
                 if "pde" in prediction:
                     pde = prediction["pde"][model_idx]
-                    path = (
-                        struct_dir
-                        / f"pde_{record.id}_model_{idx_to_rank[model_idx]}.npz"
-                    )
+                    path = struct_dir / f"pde_{record.id}_model_{idx_to_rank[model_idx]}.npz"
                     np.savez_compressed(path, pde=pde.cpu().numpy())
 
     def on_predict_epoch_end(
@@ -251,7 +233,7 @@ class BoltzWriter(BasePredictionWriter):
     ) -> None:
         """Print the number of failed examples."""
         # Print number of failed examples
-        print(f"Number of failed examples: {self.failed}")  # noqa: T201
+        print(f"Number of failed examples: {self.failed}")
 
 
 class BoltzAffinityWriter(BasePredictionWriter):
@@ -304,13 +286,9 @@ class BoltzAffinityWriter(BasePredictionWriter):
             pred_affinity_value2 = prediction["affinity_pred_value2"]
             pred_affinity_probability2 = prediction["affinity_probability_binary2"]
             affinity_summary["affinity_pred_value1"] = pred_affinity_value1.item()
-            affinity_summary["affinity_probability_binary1"] = (
-                pred_affinity_probability1.item()
-            )
+            affinity_summary["affinity_probability_binary1"] = pred_affinity_probability1.item()
             affinity_summary["affinity_pred_value2"] = pred_affinity_value2.item()
-            affinity_summary["affinity_probability_binary2"] = (
-                pred_affinity_probability2.item()
-            )
+            affinity_summary["affinity_probability_binary2"] = pred_affinity_probability2.item()
 
         # Save the affinity summary
         struct_dir = self.output_dir / batch["record"][0].id
@@ -327,4 +305,4 @@ class BoltzAffinityWriter(BasePredictionWriter):
     ) -> None:
         """Print the number of failed examples."""
         # Print number of failed examples
-        print(f"Number of failed examples: {self.failed}")  # noqa: T201
+        print(f"Number of failed examples: {self.failed}")

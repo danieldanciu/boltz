@@ -32,19 +32,15 @@ class TokenData:
 class BoltzTokenizer(Tokenizer):
     """Tokenize an input structure for training."""
 
-    def tokenize(self, data: Input) -> Tokenized:
+    @staticmethod
+    def tokenize(data: Input) -> Tokenized:
         """Tokenize the input data.
 
-        Parameters
-        ----------
-        data : Input
-            The input data.
+        Args:
+            data: The input data.
 
-        Returns
-        -------
-        Tokenized
+        Returns:
             The tokenized data.
-
         """
         # Get structure data
         struct = data.structure
@@ -110,7 +106,7 @@ class BoltzTokenizer(Tokenizer):
 
                     token_idx += 1
 
-                # Non-standard are tokenized per atom
+                # Non-standard amino acids are tokenized per atom
                 else:
                     # We use the unk protein token as res_type
                     unk_token = const.unk_token["PROTEIN"]
@@ -143,9 +139,7 @@ class BoltzTokenizer(Tokenizer):
                             disto_coords=atom_coords[i],
                             resolved_mask=is_present,
                             disto_mask=is_present,
-                            cyclic_period=chain[
-                                "cyclic_period"
-                            ],  # Enforced to be False in chain parser
+                            cyclic_period=chain["cyclic_period"],  # Enforced to be False in chain parser
                         )
                         token_data.append(astuple(token))
 
@@ -158,10 +152,7 @@ class BoltzTokenizer(Tokenizer):
 
         # Add atom-atom bonds from ligands
         for bond in struct.bonds:
-            if (
-                bond["atom_1"] not in atom_to_token
-                or bond["atom_2"] not in atom_to_token
-            ):
+            if bond["atom_1"] not in atom_to_token or bond["atom_2"] not in atom_to_token:
                 continue
             token_bond = (
                 atom_to_token[bond["atom_1"]],
@@ -171,10 +162,7 @@ class BoltzTokenizer(Tokenizer):
 
         # Add connection bonds (covalent)
         for conn in struct.connections:
-            if (
-                conn["atom_1"] not in atom_to_token
-                or conn["atom_2"] not in atom_to_token
-            ):
+            if conn["atom_1"] not in atom_to_token or conn["atom_2"] not in atom_to_token:
                 continue
             token_bond = (
                 atom_to_token[conn["atom_1"]],

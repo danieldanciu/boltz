@@ -24,7 +24,7 @@ class NumpySerializable:
         path : Path
             The path to the file.
 
-        Returns
+        Returns:
         -------
         Serializable
             The loaded object.
@@ -56,7 +56,7 @@ class JSONSerializable(DataClassDictMixin):
         path : Path
             The path to the file.
 
-        Returns
+        Returns:
         -------
         Serializable
             The loaded object.
@@ -187,7 +187,7 @@ class Structure(NumpySerializable):
         path : Path
             The path to the file.
 
-        Returns
+        Returns:
         -------
         Structure
             The loaded structure.
@@ -204,7 +204,7 @@ class Structure(NumpySerializable):
             mask=structure["mask"],
         )
 
-    def remove_invalid_chains(self) -> "Structure":  # noqa: PLR0915
+    def remove_invalid_chains(self) -> "Structure":
         """Remove invalid chains.
 
         Parameters
@@ -212,7 +212,7 @@ class Structure(NumpySerializable):
         structure : Structure
             The structure to process.
 
-        Returns
+        Returns:
         -------
         Structure
             The structure with masked chains removed.
@@ -251,12 +251,8 @@ class Structure(NumpySerializable):
                 # Update the residue
                 new_res = res.copy()
                 new_res["atom_idx"] = atom_idx
-                new_res["atom_center"] = (
-                    atom_idx + new_res["atom_center"] - res["atom_idx"]
-                )
-                new_res["atom_disto"] = (
-                    atom_idx + new_res["atom_disto"] - res["atom_idx"]
-                )
+                new_res["atom_center"] = atom_idx + new_res["atom_center"] - res["atom_idx"]
+                new_res["atom_disto"] = atom_idx + new_res["atom_disto"] - res["atom_idx"]
                 residues.append(new_res)
                 res_map[res_start + j] = res_idx
                 res_idx += 1
@@ -334,7 +330,7 @@ class StructureV2(NumpySerializable):
     ensemble: np.ndarray
     pocket: Optional[np.ndarray] = None
 
-    def remove_invalid_chains(self) -> "StructureV2":  # noqa: PLR0915
+    def remove_invalid_chains(self) -> "StructureV2":
         """Remove invalid chains.
 
         Parameters
@@ -342,7 +338,7 @@ class StructureV2(NumpySerializable):
         structure : Structure
             The structure to process.
 
-        Returns
+        Returns:
         -------
         Structure
             The structure with masked chains removed.
@@ -381,12 +377,8 @@ class StructureV2(NumpySerializable):
                 # Update the residue
                 new_res = res.copy()
                 new_res["atom_idx"] = atom_idx
-                new_res["atom_center"] = (
-                    atom_idx + new_res["atom_center"] - res["atom_idx"]
-                )
-                new_res["atom_disto"] = (
-                    atom_idx + new_res["atom_disto"] - res["atom_idx"]
-                )
+                new_res["atom_center"] = atom_idx + new_res["atom_center"] - res["atom_idx"]
+                new_res["atom_disto"] = atom_idx + new_res["atom_disto"] - res["atom_idx"]
                 residues.append(new_res)
                 res_map[res_start + j] = res_idx
                 res_idx += 1
@@ -468,7 +460,24 @@ MSASequence = [
 
 @dataclass(frozen=True)
 class MSA(NumpySerializable):
-    """MSA datatype."""
+    """Efficiently stores a multiple sequence alignment.
+
+    Args:
+        sequences: metadata for each individual sequence in the MSA, acting as a lookup table for where each sequence's
+            residues and deletions start and end within the residues and deletions arrays, respectively. It has
+            as many rows as there are sequences in the MSA, and each row has a tuple of the form:
+            (seq_idx, taxonomy_id, res_start, res_end, del_start, del_end):
+            seq_idx: the index of the sequence in the MSA, starting from 0
+            taxonomy_id: the taxonomy ID of the sequence, or -1 if not annotated
+            res_start: the index of the first residue in the residues array for this sequence
+            res_end: the index of the first residue after the last residue in the residues array for this sequence
+            del_start: the index of the first deletion in the deletions array for this sequence
+            del_end: the index of the first deletion after the last deletion in the deletions array for this sequence
+        deletions: contiguous stretches of deleted residues within the sequences relative to the primary sequence.
+            Each deletion is represented as a tuple of the form (res_idx, deletion_length), where res_idx is the index
+            of the first residue in the deletion and deletion_length is the number of residues deleted.
+        residues: the tokenized amino acids for the concatenation of all sequences in the MSA
+    """
 
     sequences: np.ndarray
     deletions: np.ndarray
@@ -491,7 +500,7 @@ class StructureInfo:
     revised: Optional[str] = None
     num_chains: Optional[int] = None
     num_interfaces: Optional[int] = None
-    pH: Optional[float] = None
+    pH: Optional[float] = None  # noqa: N815
     temperature: Optional[float] = None
 
 
@@ -531,7 +540,7 @@ class MDInfo:
 
     forcefield: Optional[list[str]]
     temperature: Optional[float]  # Kelvin
-    pH: Optional[float]
+    pH: Optional[float]  # noqa: N815
     pressure: Optional[float]  # bar
     prod_ensemble: Optional[str]
     solvent: Optional[str]
@@ -651,12 +660,12 @@ class Manifest(JSONSerializable):
         path : Path
             The path to the file.
 
-        Returns
+        Returns:
         -------
         Serializable
             The loaded object.
 
-        Raises
+        Raises:
         ------
         TypeError
             If the file is not a valid manifest file.
